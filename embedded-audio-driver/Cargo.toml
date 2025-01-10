@@ -4,11 +4,16 @@ version = "0.0.0"
 edition = "2021"
 authors = ["Decaday <myDecaday@outlook.com>"]
 repository = "https://github.com/decaday/embedded-audio"
-documentation = "https://docs.rs/embedded-audio"
+documentation = "https://docs.rs/embedded-audio-driver"
 homepage = "https://github.com/decaday/embedded-audio"
 categories = ["embedded", "no-std", "hardware-support"]
-description = "Embedded Audio"
+description = "`embedded-audio` interface crate"
 readme = "README.md"
 license = "Apache-2.0"
 
 [dependencies]
+ringbuffer = "0.15.0"
+embedded-io = "0.6"
+
+[features]
+std = ["embedded-io/std"]

@@ -51,6 +51,8 @@ dependencies = [
 [[package]]
 name = "embedded-audio-driver"
 version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a4aabeae3b5a6ec7231eb08fa823652d0520b3757d8059e0c70efdf53a7ecb4"
 
 [[package]]
 name = "proc-macro-error-attr2"

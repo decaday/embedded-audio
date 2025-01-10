@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2021"
 authors = ["Decaday <myDecaday@outlook.com>"]
 repository = "https://github.com/decaday/embedded-audio"
-documentation = "https://docs.rs/embedded-audio-driver"
+documentation = "https://docs.rs/embedded-audio"
 homepage = "https://github.com/decaday/embedded-audio"
 categories = ["embedded", "no-std", "hardware-support"]
 description = "Embedded Audio Driver"
@@ -12,8 +12,24 @@ readme = "../README.md"
 license = "Apache-2.0"
 
 [dependencies]
-defmt = { version = "0.3", optional = true }
+# embedded-audio-driver = { version = "0.0.0" }
 embedded-audio-driver = { path = "../embedded-audio-driver" }
 
+defmt = { version = "0.3", optional = true }
+
+# embassy-sync = { version = "0.6.1" }
+# embassy-time = { version = "0.3.2" }
+# cpal = "0.15.3"
+ringbuffer = "0.15.0"
+embedded-io = "0.6"
+
+[dev-dependencies]
+embedded-io-adapters = { version = "0.6", features = ["std"] }
+# embassy-executor = { version = "0.6", features = ["task-arena-size-32768", "arch-std", "executor-thread", "log", "integrated-timers"] }
+
 [features]
+default = ["std"]
 defmt = ["dep:defmt"]
+# log = ["embassy-sync/log", "embassy-time/log"]
+# std = ["embassy-time/std"]
+std = ["embedded-io/std", "embedded-audio-driver/std"]

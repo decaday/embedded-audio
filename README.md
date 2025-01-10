@@ -28,9 +28,9 @@ Development stage: **Initial Design Phase**
 The framework aims to provide:
 
 - Audio element pipeline system
-- Support for various input streams (WAV, MP3, ADC ...)
+- Support for various input streams (I2S, FileSystem, ADC ...)
 - Multiple output streams (I2S, DAC ...)
-- Audio format conversion
+- Audio format decoder
 - Flexible audio processing chain
 
 ## Acknowledgments

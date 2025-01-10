@@ -1,24 +1,14 @@
-use crate::Result;
-use crate::stream::AudioFormat;
+use embedded_io::ReadExactError;
 
-/// Decoder information and capabilities
-#[derive(Debug, Clone)]
-pub struct DecoderInfo {
-    /// List of supported input formats (e.g., "MP3", "WAV")
-    pub supported_formats: &'static [&'static str],
-    /// Output audio format specification
-    pub output_format: AudioFormat,
-}
+use crate::element::Info;
 
 /// Decoder runtime state
 #[derive(Debug, Clone, Copy)]
 pub struct DecoderState {
-    /// Total number of samples in the stream
-    pub total_samples: u64,
     /// Number of samples decoded so far
     pub decoded_samples: u64,
-    /// Current bitrate in bits per second
-    pub current_bitrate: u32,
+    // /// Current bitrate in bits per second
+    // pub current_bitrate: u32,
 }
 
 /// Audio decoder interface
@@ -27,18 +17,73 @@ pub struct DecoderState {
 /// supporting initialization, decoding, and state management.
 pub trait Decoder {
     /// Initialize the decoder
-    fn init(&mut self) -> Result<()>;
+    fn init(&mut self) -> Result<(), Error>;
     
-    /// Decode a block of input data
-    /// Returns the number of bytes written to output
-    fn decode(&mut self, input: &[u8], output: &mut [u8]) -> Result<usize>;
+    /// Read audio data
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
     
     /// Get decoder capabilities and information
-    fn get_info(&self) -> DecoderInfo;
+    fn get_info(&self) -> Info;
     
     /// Get current decoder state
-    fn get_state(&self) -> Result<DecoderState>;
+    fn get_state(&self) -> Result<DecoderState, Error>;
     
-    /// Reset decoder to initial state
-    fn reset(&mut self) -> Result<()>;
+    fn seek(&mut self, sample_num: u64) -> Result<(), Error>;
 }
+
+#[derive(Debug)]
+pub enum Error {
+    Io(embedded_io::ErrorKind),
+    UnexpectedEof,
+    InvalidHeader,
+    UnsupportedFormat,
+    BufferOverflow,
+    InvalidData,
+    UnsupportedFunction,
+    // Other,
+}
+
+// rustc:
+// conflicting implementations of trait From<ReadExactError<_>> for type decoder::Error 
+// upstream crates may add a new impl of trait embedded_io::Error for type embedded_io::ReadExactError<_> in future
+
+// impl<E: embedded_io::Error> From<ReadExactError<E>> for Error {
+//     fn from(err: ReadExactError<E>) -> Self {
+//         match err {
+//             ReadExactError::UnexpectedEof => Error::UnexpectedEof,
+//             ReadExactError::Other(e) => Error::Io(e.kind()),
+//         }
+//     }
+// }
+
+impl Error {
+    pub fn from_read_exact<E: embedded_io::Error>(err: ReadExactError<E>) -> Error {
+        match err {
+            ReadExactError::UnexpectedEof => Error::UnexpectedEof,
+            ReadExactError::Other(e) => Error::Io(e.kind()),
+        }
+    }
+}
+
+impl<E: embedded_io::Error> From<E> for Error {
+    fn from(err: E) -> Self {
+        Error::Io(err.kind())
+    }
+}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Io(kind) => write!(f, "IO error: {:?}", kind),
+            Error::UnexpectedEof => write!(f, "Unexpected EOF"),
+            Error::InvalidHeader => write!(f, "Invalid header"),
+            Error::UnsupportedFormat => write!(f, "Unsupported format"),
+            Error::BufferOverflow => write!(f, "Buffer overflow"),
+            Error::InvalidData => write!(f, "Invalid data"),
+            Error::UnsupportedFunction => write!(f, "Unsupported function"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for Error {}
