@@ -43,21 +43,12 @@ pub enum Error {
     // Other,
 }
 
-// rustc:
-// conflicting implementations of trait From<ReadExactError<_>> for type decoder::Error 
-// upstream crates may add a new impl of trait embedded_io::Error for type embedded_io::ReadExactError<_> in future
-
-// impl<E: embedded_io::Error> From<ReadExactError<E>> for Error {
-//     fn from(err: ReadExactError<E>) -> Self {
-//         match err {
-//             ReadExactError::UnexpectedEof => Error::UnexpectedEof,
-//             ReadExactError::Other(e) => Error::Io(e.kind()),
-//         }
-//     }
-// }
-
 impl Error {
-    pub fn from_read_exact<E: embedded_io::Error>(err: ReadExactError<E>) -> Error {
+    pub fn from_io<E: embedded_io::Error>(err: E) -> Error {
+        Error::Io(err.kind())
+    }
+
+    pub fn from_io_read_exact<E: embedded_io::Error>(err: ReadExactError<E>) -> Error {
         match err {
             ReadExactError::UnexpectedEof => Error::UnexpectedEof,
             ReadExactError::Other(e) => Error::Io(e.kind()),
@@ -65,9 +56,12 @@ impl Error {
     }
 }
 
-impl<E: embedded_io::Error> From<E> for Error {
-    fn from(err: E) -> Self {
-        Error::Io(err.kind())
+impl embedded_io::Error for Error {
+    fn kind(&self) -> embedded_io::ErrorKind {
+        match self {
+            Error::Io(kind) => *kind,
+            _ => embedded_io::ErrorKind::Other,
+        }
     }
 }
 

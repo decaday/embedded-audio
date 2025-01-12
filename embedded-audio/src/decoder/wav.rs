@@ -1,27 +1,27 @@
 /// WAV decoder.
 use embedded_io::{Seek, Read, SeekFrom};
 
-use embedded_audio_driver::decoder::DecoderState;
-use embedded_audio_driver::element::Element;
 use embedded_audio_driver::element::Info;
-use embedded_audio_driver::decoder::{self, Decoder};
+use embedded_audio_driver::decoder::{self, Decoder, DecoderState};
 
-pub struct WavDecoder<R> {
-    reader: R,
+use crate::impl_element_for_decoder;
+
+pub struct WavDecoder<'a, R> {
+    reader: &'a mut R,
     info: Info,
     data_start: u64,
     remaining_frames: Option<u32>,
     decoded_samples: u64,
 }
 
-impl<R: Read + Seek> WavDecoder<R> {
+impl<'a, R: Read + Seek> WavDecoder<'a, R> {
     /// Creates a new WavDecoder from a reader.
     ///
     /// # Arguments
     /// * `reader` - A reader implementing the embedded-io `Read` and `Seek` traits, such as a file or buffer.
-    pub fn new(mut reader: R) -> Result<Self, decoder::Error> {
+    pub fn new(reader: &'a mut R) -> Result<Self, decoder::Error> {
         let mut header = [0u8; 44];
-        reader.read_exact(&mut header).map_err(decoder::Error::from_read_exact)?;
+        reader.read_exact(&mut header).map_err(decoder::Error::from_io_read_exact)?;
 
         // Validate the RIFF header
         if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
@@ -59,9 +59,9 @@ impl<R: Read + Seek> WavDecoder<R> {
     }
 }
 
-impl<R: Read + Seek> Decoder for WavDecoder<R> {
+impl<'a, R: Read + Seek> Decoder for WavDecoder<'a, R> {
     fn init(&mut self) -> Result<(), decoder::Error> {
-        self.reader.seek(SeekFrom::Start(self.data_start)).map_err(decoder::Error::from)?;
+        self.reader.seek(SeekFrom::Start(self.data_start)).map_err(decoder::Error::from_io)?;
         self.remaining_frames = self.info.num_frames;
         self.decoded_samples = 0;
         Ok(())
@@ -74,7 +74,7 @@ impl<R: Read + Seek> Decoder for WavDecoder<R> {
             let frames_to_read = remaining_frames.min(max_frames as u32) as usize;
 
             let bytes_to_read = frames_to_read * frame_size;
-            let bytes_read = self.reader.read(&mut buffer[..bytes_to_read])?;
+            let bytes_read = self.reader.read(&mut buffer[..bytes_to_read]).map_err(decoder::Error::from_io)?;
 
             let frames_read = bytes_read / frame_size;
             self.remaining_frames = Some(remaining_frames - frames_read as u32);
@@ -82,7 +82,7 @@ impl<R: Read + Seek> Decoder for WavDecoder<R> {
 
             Ok(bytes_read)
         } else {
-            self.reader.read(buffer).map_err(decoder::Error::from)
+            self.reader.read(buffer).map_err(decoder::Error::from_io)
         }
     }
 
@@ -99,12 +99,14 @@ impl<R: Read + Seek> Decoder for WavDecoder<R> {
     fn seek(&mut self, sample_num: u64) -> Result<(), decoder::Error> {
         let frame_size = (self.info.bits_per_sample as u64 / 8) * self.info.channels as u64;
         let byte_offset = sample_num * frame_size;
-        self.reader.seek(SeekFrom::Start(self.data_start + byte_offset)).map_err(decoder::Error::from)?;
+        self.reader.seek(SeekFrom::Start(self.data_start + byte_offset)).map_err(decoder::Error::from_io)?;
         self.remaining_frames = self.info.num_frames.map(|frames| frames - sample_num as u32);
         self.decoded_samples = sample_num;
         Ok(())
     }
 }
+
+impl_element_for_decoder!(WavDecoder<'a, R> where R: Read + Seek);
 
 #[cfg(test)]
 mod tests {
@@ -115,8 +117,8 @@ mod tests {
     #[test]
     fn test_decoder_metadata() {
         let wav_data =  include_bytes!("../../../res/light-rain.wav");
-        let cursor = FromStd::new(Cursor::new(wav_data));
-        let decoder = WavDecoder::new(cursor).expect("Failed to create WavDecoder");
+        let mut cursor = FromStd::new(Cursor::new(wav_data));
+        let decoder = WavDecoder::new(&mut cursor).expect("Failed to create WavDecoder");
 
         let info = decoder.get_info();
         assert_eq!(info.sample_rate, 44100);
@@ -127,8 +129,8 @@ mod tests {
     #[test]
     fn test_read_samples() {
         let wav_data = include_bytes!("../../../res/light-rain.wav");
-        let cursor = FromStd::new(Cursor::new(wav_data));
-        let mut decoder = WavDecoder::new(cursor).expect("Failed to create WavDecoder");
+        let mut cursor = FromStd::new(Cursor::new(wav_data));
+        let mut decoder = WavDecoder::new(&mut cursor).expect("Failed to create WavDecoder");
 
         decoder.init().expect("Failed to initialize decoder");
 
@@ -142,8 +144,8 @@ mod tests {
     #[test]
     fn test_seek() {
         let wav_data =  include_bytes!("../../../res/light-rain.wav");
-        let cursor = FromStd::new(Cursor::new(wav_data));
-        let mut decoder = WavDecoder::new(cursor).expect("Failed to create WavDecoder");
+        let mut cursor = FromStd::new(Cursor::new(wav_data));
+        let mut decoder = WavDecoder::new(&mut cursor).expect("Failed to create WavDecoder");
 
         decoder.init().expect("Failed to initialize decoder");
 

@@ -39,7 +39,9 @@ impl Default for Info {
 }
 
 pub trait Element {
-    fn info() -> Info;
+    fn get_in_info(&self) -> Option<Info>;
 
-    fn progress(&mut self, in_ringbuffer: &mut RingBuffer<u8>, out_ringbuffer: &mut RingBuffer<u8>);
+    fn get_out_info(&self) -> Option<Info>;
+
+    // fn progress(&mut self, in_ringbuffer: &mut RingBuffer<u8>, out_ringbuffer: &mut RingBuffer<u8>);
 }
