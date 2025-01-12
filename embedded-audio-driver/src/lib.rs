@@ -1,7 +1,9 @@
 pub mod stream;
 pub mod decoder;
+pub mod encoder;
 pub mod element;
 pub mod reader;
+pub mod writer;
 
 #[derive(Debug)]
 pub enum Error {

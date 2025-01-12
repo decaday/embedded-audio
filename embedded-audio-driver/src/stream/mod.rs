@@ -43,9 +43,6 @@ pub trait Stream {
     
     /// Get current stream state
     fn state(&self) -> StreamState;
-    
-    /// Get current audio format configuration
-    fn format(&self) -> Option<AudioFormat>;
 }
 
 /// Input stream interface for audio capture
