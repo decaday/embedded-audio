@@ -1,9 +1,15 @@
-use embedded_audio_driver::encoder::Encoder;
+use embedded_audio_driver::{element::Element, encoder::Encoder};
 use embedded_audio_driver::writer;
 use embedded_io::{ErrorType, Write};
 
 pub struct EncoderWriter<'a, T: Encoder> {
     encoder: &'a mut T,
+}
+
+impl<'a, T: Encoder> EncoderWriter<'a, T> {
+    pub fn new(encoder: &'a mut T) -> Self {
+        Self { encoder }
+    }
 }
 
 impl<'a, T: Encoder> ErrorType for EncoderWriter<'a, T> {
@@ -21,13 +27,25 @@ impl<'a, T: Encoder> Write for EncoderWriter<'a, T> {
     }
 }
 
+impl <'a, T: Encoder> Element for EncoderWriter<'a, T> {
+    type Error = writer::Error;
+
+    fn get_in_info(&self) -> Option<embedded_audio_driver::info::Info> {
+        Some(self.encoder.get_info())
+    }
+
+    fn get_out_info(&self) -> Option<embedded_audio_driver::info::Info> {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use embedded_io_adapters::std::FromStd;
     use std::io::Cursor;
     use crate::encoder::wav::WavEncoder;
-    use embedded_audio_driver::element::Info;
+    use embedded_audio_driver::info::Info;
 
     #[test]
     fn test_encoder_writer() {
@@ -37,7 +55,6 @@ mod tests {
             sample_rate: 44100,
             channels: 2,
             bits_per_sample: 16,
-            duration: None,
             num_frames: None,
         };
         let mut encoder = WavEncoder::new(&mut cursor, info).expect("Failed to create WavEncoder");

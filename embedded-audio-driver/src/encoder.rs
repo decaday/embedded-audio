@@ -1,4 +1,4 @@
-use crate::element::Info;
+use crate::info::Info;
 
 /// Encoder runtime state
 #[derive(Debug, Clone, Copy)]

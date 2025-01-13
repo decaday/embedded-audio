@@ -1,6 +1,6 @@
 use embedded_io::ReadExactError;
 
-use crate::element::Info;
+use crate::info::Info;
 
 /// Decoder runtime state
 #[derive(Debug, Clone, Copy)]

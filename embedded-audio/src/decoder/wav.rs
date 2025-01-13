@@ -1,7 +1,7 @@
 /// WAV decoder.
 use embedded_io::{Seek, Read, SeekFrom};
 
-use embedded_audio_driver::element::Info;
+use embedded_audio_driver::info::Info;
 use embedded_audio_driver::decoder::{self, Decoder, DecoderState};
 
 use crate::impl_element_for_decoder;
@@ -39,8 +39,6 @@ impl<'a, R: Read + Seek> WavDecoder<'a, R> {
             None
         };
 
-        let duration = num_frames.map(|frames| frames * 1000 / sample_rate);
-
         let data_start = 44; // Assume no extra chunks for simplicity
 
         Ok(Self {
@@ -49,7 +47,6 @@ impl<'a, R: Read + Seek> WavDecoder<'a, R> {
                 sample_rate,
                 channels,
                 bits_per_sample,
-                duration,
                 num_frames,
             },
             data_start,

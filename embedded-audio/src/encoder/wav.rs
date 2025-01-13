@@ -1,6 +1,8 @@
 use embedded_io::{Seek, SeekFrom, Write};
-use embedded_audio_driver::element::Info;
+use embedded_audio_driver::info::Info;
 use embedded_audio_driver::encoder::{self, Encoder, EncoderState};
+
+use crate::impl_element_for_encoder;
 
 pub struct WavEncoder<'a, W> {
     writer: &'a mut W,
@@ -81,6 +83,8 @@ impl<'a, W: Write + Seek> Encoder for WavEncoder<'a, W> {
     }
 }
 
+impl_element_for_encoder!(WavEncoder<'a, W> where W: Write + Seek);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,7 +99,6 @@ mod tests {
             sample_rate: 44100,
             channels: 2,
             bits_per_sample: 16,
-            duration: None,
             num_frames: None,
         };
         let encoder = WavEncoder::new(&mut cursor, info).expect("Failed to create WavEncoder");
@@ -114,7 +117,6 @@ mod tests {
             sample_rate: 44100,
             channels: 2,
             bits_per_sample: 16,
-            duration: None,
             num_frames: None,
         };
         let mut encoder = WavEncoder::new(&mut cursor, info).expect("Failed to create WavEncoder");
@@ -135,7 +137,6 @@ mod tests {
             sample_rate: 44100,
             channels: 2,
             bits_per_sample: 16,
-            duration: None,
             num_frames: None,
         };
         let mut encoder = WavEncoder::new(&mut cursor, info).expect("Failed to create WavEncoder");
