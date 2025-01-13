@@ -4,6 +4,7 @@ pub mod encoder;
 pub mod element;
 pub mod reader;
 pub mod writer;
+pub mod info;
 
 #[derive(Debug)]
 pub enum Error {

@@ -1,18 +1,8 @@
-use crate::Result;
+use crate::info::Info;
+
 
 pub mod i2s;
 pub mod dac;
-
-/// Audio format configuration
-#[derive(Debug, Clone, Copy)]
-pub struct AudioFormat {
-    /// Sampling rate in Hz (e.g., 44100, 48000)
-    pub sample_rate: u32,
-    /// Bits per sample (e.g., 16, 24, 32)
-    pub bits_per_sample: u8,
-    /// Number of channels (1 for mono, 2 for stereo)
-    pub channels: u8,
-}
 
 /// Stream states
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,22 +17,25 @@ pub enum StreamState {
 /// Common stream operations
 pub trait Stream {
     /// Initialize the stream with specified format
-    fn init(&mut self, format: &AudioFormat) -> Result<()>;
+    fn init(&mut self) -> Result<(), Error>;
     
     /// Start the stream
-    fn start(&mut self) -> Result<()>;
+    fn start(&mut self) -> Result<(), Error>;
     
     /// Stop the stream and reset internal state
-    fn stop(&mut self) -> Result<()>;
+    fn stop(&mut self) -> Result<(), Error>;
     
     /// Pause the stream (maintains internal state)
-    fn pause(&mut self) -> Result<()>;
+    fn pause(&mut self) -> Result<(), Error>;
     
     /// Resume a paused stream
-    fn resume(&mut self) -> Result<()>;
+    fn resume(&mut self) -> Result<(), Error>;
     
     /// Get current stream state
-    fn state(&self) -> StreamState;
+    fn get_state(&self) -> StreamState;
+
+    /// Get stream information
+    fn get_info(&self) -> Info;
 }
 
 /// Input stream interface for audio capture
@@ -52,11 +45,14 @@ pub trait Stream {
 pub trait InputStream: Stream {
     /// Read audio data into the provided buffer
     /// Returns the number of bytes read
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize>;
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
     
     /// Check if data is available for reading
     /// Returns the number of bytes available
-    fn available(&self) -> Result<usize>;
+    fn available(&self) -> Result<usize, Error>;
+
+    #[cfg(feature = "async")]
+    async fn available(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
 }
 
 /// Output stream interface for audio playback
@@ -66,9 +62,18 @@ pub trait InputStream: Stream {
 pub trait OutputStream: Stream {
     /// Write audio data from the provided buffer
     /// Returns the number of bytes written
-    fn write(&mut self, buffer: &[u8]) -> Result<usize>;
+    fn write(&mut self, buffer: &[u8]) -> Result<usize, Error>;
     
     /// Check if the stream can accept more data
     /// Returns the number of bytes that can be written
-    fn space_available(&self) -> Result<usize>;
+    fn space_available(&self) -> Result<usize, Error>;
+}
+
+/// Stream errors
+#[derive(Debug)]
+pub enum Error {
+    // TODO:
+    // Custom(E),
+    Unsupported,
+    Timeout,
 }

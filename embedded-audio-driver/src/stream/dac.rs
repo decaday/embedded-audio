@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::stream::{AudioFormat, Stream, OutputStream};
+use crate::stream::{Stream, OutputStream};
 
 /// DAC channel selection
 #[derive(Debug, Clone, Copy)]
@@ -12,7 +12,6 @@ pub enum DacChannel {
 /// DAC configuration parameters
 #[derive(Debug, Clone)]
 pub struct DacConfig {
-    pub format: AudioFormat,
     pub channel: DacChannel,
     /// Reference voltage in millivolts
     pub vref: u32,

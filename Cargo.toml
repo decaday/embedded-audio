@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "embedded-audio",
-    "embedded-audio-driver", "examples/std",
+    "embedded-audio-driver",
+    "examples/std",
 ]

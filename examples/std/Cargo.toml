@@ -1,0 +1,19 @@
+[package]
+name = "embedded-audio-example-std"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# embassy-sync = { version = "0.6", features = ["log"] }
+# embassy-executor = { version = "0.6", features = ["task-arena-size-32768", "arch-std", "executor-thread", "log", "integrated-timers"] }
+# embassy-time = { version = "0.3", features = ["log", "std", ] }
+
+# hound = "3.5.0"
+# crossterm = "0.26"
+# static_cell = "1.0"
+
+embedded-audio = { path = "../../embedded-audio", features = ["std"] }
+embedded-audio-driver = { path = "../../embedded-audio-driver", features = ["std"] }
+
+embedded-io = { version= "0.6", features = ["std"] }
+embedded-io-adapters = { version = "0.6", features = ["std"] }

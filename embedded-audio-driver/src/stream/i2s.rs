@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::stream::{AudioFormat, Stream, InputStream, OutputStream};
+use crate::stream::{Stream, InputStream, OutputStream};
 
 /// I2S operating modes
 #[derive(Debug, Clone, Copy)]
@@ -22,7 +22,6 @@ pub enum I2sStandard {
 pub struct I2sConfig {
     pub mode: I2sMode,
     pub standard: I2sStandard,
-    pub format: AudioFormat,
     /// MCLK divider ratio (optional)
     pub mclk_div: Option<u32>,
 }
