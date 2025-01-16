@@ -17,3 +17,8 @@ embedded-audio-driver = { path = "../../embedded-audio-driver", features = ["std
 
 embedded-io = { version= "0.6", features = ["std"] }
 embedded-io-adapters = { version = "0.6", features = ["std"] }
+
+ringbuf = { version = "0.4.7" }
+cpal = { version = "0.15.3" }
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0.95"

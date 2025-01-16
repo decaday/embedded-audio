@@ -1,10 +1,11 @@
 use core::f32::consts::PI;
-use std::{convert::Infallible, panic};
+use std::{convert::Infallible, panic, u32};
 
 use embedded_audio_driver::element::ReaderElement;
 use embedded_audio_driver::info::Info;
+use embedded_io::{ErrorType, Read};
 
-use crate::{impl_element_for_reader_element, impl_read_for_reader_element};
+// use crate::{impl_element_for_reader_element, impl_read_for_reader_element};
 
 pub struct SineWaveGenerator {
     // Configuration parameters
@@ -30,14 +31,10 @@ impl SineWaveGenerator {
     ///                 - 0 means silence
     ///                 - 255 means maximum volume
     ///
-    /// # Returns
-    /// Returns a new instance of `SineWaveGenerator` configured with the specified parameters
-    ///
-    /// # Panics
-    /// Panics if any of the parameters are invalid.
-    ///
     /// # Example
     /// ```
+    /// use embedded_audio::generator::SineWaveGenerator;
+    /// 
     /// let generator = SineWaveGenerator::new(
     ///     44100,  // CD quality sample rate
     ///     2,      // Stereo
@@ -79,24 +76,21 @@ impl SineWaveGenerator {
     }
 }
 
-impl ReaderElement for SineWaveGenerator {
-    fn init(&mut self) -> Result<(), Infallible> {
+impl SineWaveGenerator {
+    pub fn init(&mut self) -> Result<(), Infallible> {
         self.current_sample = 0;
         Ok(())
     }
-    
-    fn get_info(&self) -> Info {
-        Info {
-            sample_rate: self.sample_rate,
-            channels: self.channels,
-            bits_per_sample: self.bits_per_sample,
-            num_frames: None,
-        }
-    }
-    
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Infallible> {
+}
+
+impl ErrorType for SineWaveGenerator {
+    type Error = Infallible;
+}
+
+impl Read for SineWaveGenerator {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Infallible> {
         let bytes_per_sample = (self.bits_per_sample as usize + 7) / 8;
-        let samples_to_write = buffer.len() / (bytes_per_sample * self.channels as usize);
+        let samples_to_write = buf.len() / (bytes_per_sample * self.channels as usize);
         let mut bytes_written = 0;
         
         for _ in 0..samples_to_write {
@@ -114,22 +108,22 @@ impl ReaderElement for SineWaveGenerator {
             for _ in 0..self.channels {
                 match self.bits_per_sample {
                     8 => {
-                        buffer[bytes_written] = int_sample as u8;
+                        buf[bytes_written] = int_sample as u8;
                         bytes_written += 1;
                     }
                     16 => {
                         let bytes = (int_sample as i16).to_le_bytes();
-                        buffer[bytes_written..bytes_written + 2].copy_from_slice(&bytes);
+                        buf[bytes_written..bytes_written + 2].copy_from_slice(&bytes);
                         bytes_written += 2;
                     }
                     24 => {
                         let bytes = int_sample.to_le_bytes();
-                        buffer[bytes_written..bytes_written + 3].copy_from_slice(&bytes[..3]);
+                        buf[bytes_written..bytes_written + 3].copy_from_slice(&bytes[..3]);
                         bytes_written += 3;
                     }
                     32 => {
                         let bytes = int_sample.to_le_bytes();
-                        buffer[bytes_written..bytes_written + 4].copy_from_slice(&bytes);
+                        buf[bytes_written..bytes_written + 4].copy_from_slice(&bytes);
                         bytes_written += 4;
                     }
                     _ => unreachable!(),
@@ -143,5 +137,20 @@ impl ReaderElement for SineWaveGenerator {
     }
 }
 
-impl_element_for_reader_element!(SineWaveGenerator);
-impl_read_for_reader_element!(SineWaveGenerator);
+impl ReaderElement for SineWaveGenerator {
+    fn get_info(&self) -> Info {
+        Info {
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            bits_per_sample: self.bits_per_sample,
+            num_frames: Some(self.current_sample),
+        }
+    }
+    
+    fn available(&self) -> u32 {
+        u32::MAX
+    }
+}
+
+// impl_element_for_reader_element!(SineWaveGenerator);
+// impl_read_for_reader_element!(SineWaveGenerator);

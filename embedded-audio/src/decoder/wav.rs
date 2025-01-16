@@ -1,10 +1,11 @@
+use embedded_audio_driver::element::ReaderElement;
 /// WAV decoder.
-use embedded_io::{Seek, Read, SeekFrom};
+use embedded_io::{ErrorType, Read, Seek, SeekFrom};
 
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::decoder::{self, Decoder, DecoderState};
 
-use crate::impl_element_for_decoder;
+// use crate::{impl_element_for_decoder, impl_read_for_decoder};
 
 pub struct WavDecoder<'a, R> {
     reader: &'a mut R,
@@ -64,28 +65,7 @@ impl<'a, R: Read + Seek> Decoder for WavDecoder<'a, R> {
         Ok(())
     }
 
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, decoder::Error> {
-        if let Some(remaining_frames) = self.remaining_frames {
-            let frame_size = (self.info.bits_per_sample as usize / 8) * self.info.channels as usize;
-            let max_frames = buffer.len() / frame_size;
-            let frames_to_read = remaining_frames.min(max_frames as u32) as usize;
 
-            let bytes_to_read = frames_to_read * frame_size;
-            let bytes_read = self.reader.read(&mut buffer[..bytes_to_read]).map_err(decoder::Error::from_io)?;
-
-            let frames_read = bytes_read / frame_size;
-            self.remaining_frames = Some(remaining_frames - frames_read as u32);
-            self.decoded_samples += frames_read as u64;
-
-            Ok(bytes_read)
-        } else {
-            self.reader.read(buffer).map_err(decoder::Error::from_io)
-        }
-    }
-
-    fn get_info(&self) -> Info {
-        self.info
-    }
 
     fn get_state(&self) -> Result<DecoderState, decoder::Error> {
         Ok(DecoderState {
@@ -103,7 +83,43 @@ impl<'a, R: Read + Seek> Decoder for WavDecoder<'a, R> {
     }
 }
 
-impl_element_for_decoder!(WavDecoder<'a, R> where R: Read + Seek);
+impl<'a, R: Read + Seek> ErrorType for WavDecoder<'a, R> {
+    type Error = decoder::Error;
+}
+
+impl<'a, R: Read + Seek> Read for WavDecoder<'a, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        if let Some(remaining_frames) = self.remaining_frames {
+            let frame_size = (self.info.bits_per_sample as usize / 8) * self.info.channels as usize;
+            let max_frames = buffer.len() / frame_size;
+            let frames_to_read = remaining_frames.min(max_frames as u32) as usize;
+
+            let bytes_to_read = frames_to_read * frame_size;
+            let bytes_read = self.reader.read(&mut buffer[..bytes_to_read]).map_err(decoder::Error::from_io)?;
+
+            let frames_read = bytes_read / frame_size;
+            self.remaining_frames = Some(remaining_frames - frames_read as u32);
+            self.decoded_samples += frames_read as u64;
+
+            Ok(bytes_read)
+        } else {
+            self.reader.read(buffer).map_err(decoder::Error::from_io)
+        }
+    }
+}
+
+impl<'a, R: Read + Seek> ReaderElement for WavDecoder<'a, R> {
+    fn get_info(&self) -> Info {
+        self.info
+    }
+
+    fn available(&self) -> u32 {
+        u32::MAX
+    }
+}
+
+// impl_element_for_decoder!(WavDecoder<'a, R> where R: Read + Seek);
+// impl_read_for_decoder!(WavDecoder<'a, R> where R: Read + Seek);
 
 #[cfg(test)]
 mod tests {

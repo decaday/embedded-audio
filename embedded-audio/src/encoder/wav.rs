@@ -1,8 +1,9 @@
-use embedded_io::{Seek, SeekFrom, Write};
+use embedded_audio_driver::element::WriterElement;
+use embedded_io::{ErrorType, Seek, SeekFrom, Write};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::encoder::{self, Encoder, EncoderState};
 
-use crate::impl_element_for_encoder;
+// use crate::{impl_element_for_encoder, impl_write_for_encoder};
 
 pub struct WavEncoder<'a, W> {
     writer: &'a mut W,
@@ -61,16 +62,6 @@ impl<'a, W: Write + Seek> Encoder for WavEncoder<'a, W> {
         self.write_header()
     }
 
-    fn write(&mut self, buffer: &[u8]) -> Result<usize, encoder::Error> {
-        let bytes_written = self.writer.write(buffer).map_err(encoder::Error::from_io)?;
-        self.encoded_samples += (bytes_written as u64) / (self.info.channels as u64 * (self.info.bits_per_sample as u64 / 8));
-        Ok(bytes_written)
-    }
-
-    fn get_info(&self) -> Info {
-        self.info
-    }
-
     fn get_state(&self) -> Result<EncoderState, encoder::Error> {
         Ok(EncoderState {
             encoded_samples: self.encoded_samples,
@@ -83,7 +74,35 @@ impl<'a, W: Write + Seek> Encoder for WavEncoder<'a, W> {
     }
 }
 
-impl_element_for_encoder!(WavEncoder<'a, W> where W: Write + Seek);
+impl<'a, W: Write + Seek> ErrorType for WavEncoder<'a, W> {
+    type Error = encoder::Error;
+}
+
+impl<'a, W: Write + Seek> Write for WavEncoder<'a, W> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        let bytes_written = self.writer.write(buf).map_err(encoder::Error::from_io)?;
+        self.encoded_samples += (bytes_written as u64) / (self.info.channels as u64 * (self.info.bits_per_sample as u64 / 8));
+        Ok(bytes_written)
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        todo!()
+    }
+}
+
+impl<'a, W: Write + Seek> WriterElement for WavEncoder<'a, W> 
+{
+    fn get_info(&self) -> Info {
+        self.info
+    }
+
+    fn available(&self) -> u32 {
+        u32::MAX
+    }
+}
+
+// impl_element_for_encoder!(WavEncoder<'a, W> where W: Write + Seek);
+// impl_write_for_encoder!(WavEncoder<'a, W> where W: Write + Seek);
 
 #[cfg(test)]
 mod tests {

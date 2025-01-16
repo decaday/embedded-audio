@@ -1,10 +1,11 @@
 pub mod sine_wave;
+pub use sine_wave::SineWaveGenerator;
 
 #[macro_export]
 macro_rules! impl_element_for_reader_element {
     // Handle types with generics and trait bounds
     ($type:ident<$($gen:tt),*> where $($bound:tt)+) => {
-        impl<$($gen),*> embedded_audio_driver::element::Element for $type<$($gen),*>
+        impl<$($gen),*> embedded_audio_driver::element::Element<embedded_audio_driver::element::ReaderMode> for $type<$($gen),*>
         where
             $($bound)+
         {
@@ -21,7 +22,7 @@ macro_rules! impl_element_for_reader_element {
 
     // Handle types with generics but no trait bounds
     ($type:ident<$($gen:tt),*>) => {
-        impl<$($gen),*> embedded_audio_driver::element::Element for $type<$($gen),*> {
+        impl<$($gen),*> embedded_audio_driver::element::Element<embedded_audio_driver::element::ReaderMode> for $type<$($gen),*> {
             type Error = core::convert::Infallible;
             
             fn get_out_info(&self) -> Option<embedded_audio_driver::info::Info> {
@@ -45,6 +46,10 @@ macro_rules! impl_element_for_reader_element {
 
             fn get_in_info(&self) -> Option<embedded_audio_driver::info::Info> {
                 None
+            }
+
+            fn process<PR, PW>(&mut self, _reader: Option<PR>, _writer: Option<PW>) -> Result<(),Self::Error> {
+                Ok(())
             }
         }
     };

@@ -2,8 +2,9 @@ pub mod encoder;
 pub mod decoder;
 pub mod stream;
 pub mod pipeline;
-pub mod reader_element;
+pub mod generator;
 pub mod relay;
+pub mod utils;
 
 // use std::sync::Arc;
 // use embassy_time::{Duration, Timer};

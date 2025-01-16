@@ -1,4 +1,4 @@
-use crate::info::Info;
+use crate::element::Element;
 
 
 pub mod i2s;
@@ -15,10 +15,7 @@ pub enum StreamState {
 }
 
 /// Common stream operations
-pub trait Stream {
-    /// Initialize the stream with specified format
-    fn init(&mut self) -> Result<(), Error>;
-    
+pub trait Stream: Element {
     /// Start the stream
     fn start(&mut self) -> Result<(), Error>;
     
@@ -33,9 +30,6 @@ pub trait Stream {
     
     /// Get current stream state
     fn get_state(&self) -> StreamState;
-
-    /// Get stream information
-    fn get_info(&self) -> Info;
 }
 
 /// Input stream interface for audio capture

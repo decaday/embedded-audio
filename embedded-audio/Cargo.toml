@@ -19,9 +19,12 @@ defmt = { version = "0.3", optional = true }
 
 # embassy-sync = { version = "0.6.1" }
 # embassy-time = { version = "0.3.2" }
-# cpal = "0.15.3"
-ringbuffer = "0.15.0"
+
+# ringbuffer = "0.15.0"
 embedded-io = "0.6"
+ringbuf = { version = "0.4.7", default-features = false }
+
+cpal = { version = "0.15.3", optional = true }
 
 [dev-dependencies]
 embedded-io-adapters = { version = "0.6", features = ["std"] }
@@ -32,4 +35,13 @@ default = ["std"]
 defmt = ["dep:defmt"]
 # log = ["embassy-sync/log", "embassy-time/log"]
 # std = ["embassy-time/std"]
-std = ["embedded-io/std", "embedded-audio-driver/std"]
+std = [
+    "alloc",
+    "embedded-io/std", 
+    "embedded-audio-driver/std", 
+    # "embassy-time/std",
+    "ringbuf/std",
+    "dep:cpal",
+]
+
+alloc = ["ringbuf/alloc"]

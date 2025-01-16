@@ -1,4 +1,4 @@
-use crate::info::Info;
+use crate::element::WriterElement;
 
 /// Encoder runtime state
 #[derive(Debug, Clone, Copy)]
@@ -13,15 +13,9 @@ pub struct EncoderState {
 /// 
 /// This trait defines the operations for audio encoders,
 /// supporting initialization, encoding, and state management.
-pub trait Encoder {
+pub trait Encoder: WriterElement {
     /// Initialize the encoder
     fn init(&mut self) -> Result<(), Error>;
-    
-    /// Write audio data
-    fn write(&mut self, buffer: &[u8]) -> Result<usize, Error>;
-    
-    /// Get encoder capabilities and information
-    fn get_info(&self) -> Info;
     
     /// Get current encoder state
     fn get_state(&self) -> Result<EncoderState, Error>;

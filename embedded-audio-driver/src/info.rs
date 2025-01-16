@@ -1,3 +1,5 @@
+use std::ops::{Div, Mul};
+
 /// Represents metadata information about an audio data stream or file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Info {
@@ -37,5 +39,13 @@ impl Info {
 
     pub fn get_duration_ms(&self) -> Option<u32> {
         self.num_frames.map(|frames| (frames * 1000) / self.sample_rate)
+    }
+
+    pub fn down_to_alignment<T>(&self, data: T) -> T 
+    where 
+        T: Div<Output = T> + Mul<Output = T> + From<u8> + Copy,
+    {
+        let alignment = T::from(self.get_alignment_bytes());
+        data / alignment * alignment
     }
 }

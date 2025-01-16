@@ -1,6 +1,6 @@
 use embedded_io::ReadExactError;
 
-use crate::info::Info;
+use crate::element::ReaderElement;
 
 /// Decoder runtime state
 #[derive(Debug, Clone, Copy)]
@@ -15,15 +15,9 @@ pub struct DecoderState {
 /// 
 /// This trait defines the operations for audio decoders,
 /// supporting initialization, decoding, and state management.
-pub trait Decoder {
+pub trait Decoder: ReaderElement {
     /// Initialize the decoder
     fn init(&mut self) -> Result<(), Error>;
-    
-    /// Read audio data
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
-    
-    /// Get decoder capabilities and information
-    fn get_info(&self) -> Info;
     
     /// Get current decoder state
     fn get_state(&self) -> Result<DecoderState, Error>;

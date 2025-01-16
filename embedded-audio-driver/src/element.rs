@@ -1,21 +1,26 @@
-// use ringbuffer::AllocRingBuffer as RingBuffer;
 use crate::info::Info;
-use core::convert::Infallible;
+
+pub trait WriterElement: embedded_io::Write {
+    fn get_info(&self) -> Info;
+
+    fn available(&self) -> u32;
+}
+
+pub trait ReaderElement: embedded_io::Read {
+    fn get_info(&self) -> Info;
+
+    fn available(&self) -> u32;
+}
 
 pub trait Element {
-    type Error;
+    type Error: core::fmt::Debug;
 
     fn get_in_info(&self) -> Option<Info>;
 
     fn get_out_info(&self) -> Option<Info>;
 
-    // fn progress(&mut self, in_ringbuffer: &mut RingBuffer<u8>, out_ringbuffer: &mut RingBuffer<u8>);
-}
-
-pub trait ReaderElement {
-    fn init(&mut self) -> Result<(), Infallible>;
-
-    fn get_info(&self) -> Info;
-    
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Infallible>;
+    fn process<R, W>(&mut self, reader: Option<&mut R>, writer: Option<&mut W>) -> Result<(), Self::Error>
+    where 
+        R: ReaderElement,
+        W: WriterElement;
 }
