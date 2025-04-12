@@ -1,4 +1,4 @@
-use std::ops::{Div, Mul};
+use std::ops::{Div, Mul, Rem};
 
 /// Represents metadata information about an audio data stream or file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,5 +47,13 @@ impl Info {
     {
         let alignment = T::from(self.get_alignment_bytes());
         data / alignment * alignment
+    }
+
+    pub fn is_aligned<T>(&self, data: T) -> bool 
+    where 
+        T: Rem<Output = T> + From<u8> + Copy + PartialEq,
+    {
+        let alignment = T::from(self.get_alignment_bytes());
+        data % alignment == T::from(0)
     }
 }

@@ -5,6 +5,8 @@ pub mod pipeline;
 pub mod generator;
 pub mod relay;
 pub mod utils;
+pub mod ringbuffer;
+pub mod transform;
 
 // use std::sync::Arc;
 // use embassy_time::{Duration, Timer};

@@ -3,8 +3,6 @@ use embedded_audio_driver::decoder::Decoder;
 use embedded_audio_driver::element::{Element, ReaderElement, WriterElement};
 use embedded_audio_driver::encoder::Encoder;
 use embedded_audio_driver::stream::{InputStream, OutputStream, Stream};
-use embedded_io::{Write, Read};
-
 
 // struct Pipeline<'a, R> {
 //     decoder: decoder::WavDecoder<'a, R>,

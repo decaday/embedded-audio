@@ -144,11 +144,14 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         if read_len != 0 {
             let mut buf = [0u8; 128];
 
-            reader.read(&mut buf[0..read_len]).unwrap();
-            buf[0..read_len].chunks(T::FORMAT.sample_size()).for_each(|chunk| {
+            let actual_len = reader.read(&mut buf[0..read_len]).unwrap();
+            if !self.info.is_aligned(actual_len) {
+                panic!();
+            }
+
+            buf[0..actual_len].chunks(T::FORMAT.sample_size()).for_each(|chunk| {
                 let sample = T::from_le_bytes(chunk.try_into().unwrap());
                 if self.rb_producer.try_push(sample).is_err(){
-                    // println!("read_len: {}, self.rb_producer.vacant_len(): {}, len2: {}", read_len, self.rb_producer.vacant_len(), len2);
                     panic!();
                 }
             });

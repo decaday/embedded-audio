@@ -1,7 +1,7 @@
 use embedded_audio_driver::element::ReaderElement;
-use embedded_audio::encoder::{wav::WavEncoder, writer::EncoderWriter};
-use embedded_audio::reader_element::sine_wave::SineWaveGenerator;
-use embedded_audio::pipeline::PipelineR2AR2W;
+use embedded_audio_driver::encoder::Encoder;
+use embedded_audio::encoder::WavEncoder;
+use embedded_audio::generator::sine_wave::SineWaveGenerator;
 use embedded_audio::relay::Relay;
 
 use embedded_io_adapters::std::FromStd;
@@ -28,14 +28,14 @@ fn main() {
     let file = std::fs::File::create("temp/sine_wave_A4.wav").unwrap();
     let mut file_adapter = FromStd::new(file);
     let mut encoder = WavEncoder::new(&mut file_adapter, info).unwrap();
-    let encoder_reader = EncoderWriter::new(&mut encoder);
 
-    let mut relay = Relay::<_, _, _, _, 1024>::new(generator, encoder_reader, 3000).unwrap();
+    let mut relay = Relay::<1024>::new(generator, encoder_reader).unwrap();
 
     // let mut pipeline = PipelineR2AR2W::new(generator, relay,  encoder_reader);
     // pipeline.run();
 
     relay.process().unwrap();
+    encoder.stop().unwrap();
     
     println!("Finished");
 }

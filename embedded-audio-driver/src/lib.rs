@@ -5,6 +5,7 @@ pub mod element;
 pub mod reader;
 pub mod writer;
 pub mod info;
+pub mod transform;
 
 #[derive(Debug)]
 pub enum Error {

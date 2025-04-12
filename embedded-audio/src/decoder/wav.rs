@@ -114,7 +114,8 @@ impl<'a, R: Read + Seek> ReaderElement for WavDecoder<'a, R> {
     }
 
     fn available(&self) -> u32 {
-        u32::MAX
+        let frame_size = (self.info.bits_per_sample as u32 / 8) * self.info.channels as u32;
+        self.remaining_frames.map_or(0, |frames| frames * frame_size)
     }
 }
 
