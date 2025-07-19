@@ -1,26 +1,23 @@
 use crate::info::Info;
+use crate::TrySeek;
+use crate::Mutex;
 
-pub trait WriterElement: embedded_io::Write {
-    fn get_info(&self) -> Info;
-
-    fn available(&self) -> u32;
-}
-
-pub trait ReaderElement: embedded_io::Read {
-    fn get_info(&self) -> Info;
-
-    fn available(&self) -> u32;
-}
+use crate::slot::{InPort, OutPort};
 
 pub trait Element {
-    type Error: core::fmt::Debug;
-
     fn get_in_info(&self) -> Option<Info>;
 
     fn get_out_info(&self) -> Option<Info>;
 
-    fn process<R, W>(&mut self, reader: Option<&mut R>, writer: Option<&mut W>) -> Result<(), Self::Error>
-    where 
-        R: ReaderElement,
-        W: WriterElement;
+    fn available(&self) -> u32;
+
+    async fn process(&mut self, in_port: Option<&InPort>, out_port: Option<&OutPort>) -> Result<(), ()>;
+}
+
+
+
+pub trait PassiveElement: Element {
+}
+
+pub trait NegativeElement: Element {
 }
