@@ -1,5 +1,6 @@
 pub mod encoder;
 pub mod decoder;
+pub mod databus;
 // pub mod stream;
 // pub mod pipeline;
 // pub mod generator;
