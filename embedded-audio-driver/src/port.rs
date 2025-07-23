@@ -1,21 +1,18 @@
 use embedded_io::{Read, Write, Seek};
 
-use crate::databus::{Databus, Release}; 
+use crate::databus::Databus; 
 use crate::payload::{Metadata, Payload};
-use crate::slot::{SlotConsumer, SlotProducer};
 
-pub enum InPort<'a, R: Read + Seek, T: Release<'a>, D: Databus<'a, T>> {
+pub enum InPort<'a, R: Read + Seek, D: Databus<'a>> {
     Reader(&'a mut R),
     Payload(&'a D),
     None,
-    _Phantom(core::marker::PhantomData<T>),
 }
 
-pub enum OutPort<'a, W: Write + Seek, T: Release<'a>, D: Databus<'a, T>> {
+pub enum OutPort<'a, W: Write + Seek, D: Databus<'a>> {
     Writer(&'a mut W),
     Payload(&'a D),
     None,
-    _Phantom(core::marker::PhantomData<T>),
 }
 
 pub enum PortRequirement {
@@ -55,18 +52,17 @@ impl Seek for Dmy {
     }
 }
 
-impl<'b> Release<'b> for Dmy {
-    fn release(&self, _buf: &'b mut [u8], _metadata: Metadata, _is_write: bool) {
-        unimplemented!()
-    }
-}
 
-impl<'b> Databus<'b, Dmy> for Dmy {
+impl<'b> Databus<'b> for Dmy {
     async fn acquire_read(&'b self) -> Payload<'b, Dmy> where Dmy: 'b {
         unimplemented!()
     }
 
     async fn acquire_write(&'b self) -> Payload<'b, Dmy> where Dmy: 'b {
+        unimplemented!()
+    }
+    
+    fn release(&self, _buf: &'b mut [u8], _metadata: Metadata, _is_write: bool) {
         unimplemented!()
     }
 }

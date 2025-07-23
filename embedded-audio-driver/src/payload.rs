@@ -1,4 +1,4 @@
-use crate::databus::Release;
+use crate::databus::Databus;
 
 /// Metadata for payload data, including position and length information
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,28 +53,28 @@ impl TryFrom<u8> for Position {
 }
 
 /// A generic payload that can be backed by different databus implementations
-pub struct Payload<'a, T: Release<'a>> {
+pub struct Payload<'a, T: Databus<'a>> {
     /// Mutable reference to the data buffer
     pub data: &'a mut [u8],
     /// Metadata about this payload
     pub metadata: Metadata,
     pub is_write: bool,
-    pub release: &'a T,
+    pub databus: &'a T,
 }
 
-impl<'a, T: Release<'a>> Payload<'a, T> {
+impl<'a, T: Databus<'a>> Payload<'a, T> {
     /// Creates a new payload with the given data, metadata, and completion callback
     pub fn new(
         data: &'a mut [u8],
         metadata: Metadata,
         is_write: bool,
-        release: &'a T,
+        databus: &'a T,
     ) -> Self {
         Self {
             data,
             metadata,
             is_write,
-            release,
+            databus,
         }
     }
 
@@ -89,7 +89,7 @@ impl<'a, T: Release<'a>> Payload<'a, T> {
     }
 }
 
-impl<'a, T: Release<'a>> core::ops::Deref for Payload<'a, T> {
+impl<'a, T: Databus<'a>> core::ops::Deref for Payload<'a, T> {
     type Target = [u8];
     
     fn deref(&self) -> &Self::Target {
@@ -97,19 +97,19 @@ impl<'a, T: Release<'a>> core::ops::Deref for Payload<'a, T> {
     }
 }
 
-impl<'a, T: Release<'a>> core::ops::DerefMut for Payload<'a, T> {
+impl<'a, T: Databus<'a>> core::ops::DerefMut for Payload<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.data
     }
 }
 
-impl<'a, T: Release<'a>> Drop for Payload<'a, T> {
+impl<'a, T: Databus<'a>> Drop for Payload<'a, T> {
     fn drop(&mut self) {
         // Return the buffer to the slot.
         let dummy_slice = &mut [];
         let buffer = core::mem::replace(&mut self.data, dummy_slice);
 
         // Execute the completion callback when the payload is dropped
-        self.release.release(buffer, self.metadata, self.is_write);
+        self.databus.release(buffer, self.metadata, self.is_write);
     }
 }

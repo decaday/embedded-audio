@@ -1,6 +1,6 @@
 use embedded_io::{Read, Write, Seek};
 
-use crate::databus::{Databus, Release};
+use crate::databus::Databus;
 use crate::info::Info;
 use crate::port::{InPort, OutPort, PortRequirement};
 
@@ -18,10 +18,9 @@ pub trait Element {
 
     fn available(&self) -> u32;
 
-    async fn process<'a, R, W, T, D>(&mut self, in_port: &mut InPort<'a, R, T, D>, out_port: &mut OutPort<'a, W, T, D>) -> Result<(), Self::Error>
+    async fn process<'a, R, W,  D>(&mut self, in_port: &mut InPort<'a, R, D>, out_port: &mut OutPort<'a, W, D>) -> Result<(), Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
-        T: Release<'a>,
-        D: Databus<'a, T>;
+        D: Databus<'a>;
 }

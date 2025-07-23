@@ -4,7 +4,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_sync::waitqueue::AtomicWaker;
-use embedded_audio_driver::databus::{Databus, Release};
+use embedded_audio_driver::databus::Databus;
 use embedded_audio_driver::payload::{Metadata, Payload};
 
 // This enum is the core of the state machine that ensures safe access to the buffer.
@@ -150,28 +150,7 @@ impl<'b> Slot<'b> {
     }
 }
 
-impl<'b> Release<'b> for Slot<'b> {
-    fn release(&self, buf: &'b mut [u8], metadata: Metadata, is_write: bool) {
-        // This is called when the payload is dropped.
-        // We need to restore the buffer and metadata.
-        unsafe {
-            *self.buffer.get() = Some(buf);
-            *self.payload_metadata.get() = Some(metadata);
-        }
-
-        if is_write {
-            // Change the state to Full, allowing consumers to read from it.
-            self.shared.state.store(State::Full as u8, Ordering::Release);
-            self.shared.consumer_waker.wake();
-        }
-        else {
-            self.shared.state.store(State::Empty as u8, Ordering::Release);
-            self.shared.producer_waker.wake();    
-        }
-    }
-}
-
-impl<'b> Databus<'b, Self> for Slot<'b> {
+impl<'b> Databus<'b> for Slot<'b> {
     async fn acquire_read(&'b self) -> Payload<'b, Self> {
         poll_fn(|cx| {
             // Atomically check if the state is `Full`. If it is, change it to `Reading`.
@@ -215,5 +194,24 @@ impl<'b> Databus<'b, Self> for Slot<'b> {
                 Poll::Pending
             }
         }).await
+    }
+
+    fn release(&self, buf: &'b mut [u8], metadata: Metadata, is_write: bool) {
+        // This is called when the payload is dropped.
+        // We need to restore the buffer and metadata.
+        unsafe {
+            *self.buffer.get() = Some(buf);
+            *self.payload_metadata.get() = Some(metadata);
+        }
+
+        if is_write {
+            // Change the state to Full, allowing consumers to read from it.
+            self.shared.state.store(State::Full as u8, Ordering::Release);
+            self.shared.consumer_waker.wake();
+        }
+        else {
+            self.shared.state.store(State::Empty as u8, Ordering::Release);
+            self.shared.producer_waker.wake();    
+        }
     }
 }
