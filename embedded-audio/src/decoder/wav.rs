@@ -1,6 +1,9 @@
-use embedded_io::{Read, Seek, SeekFrom};
+use embedded_io::{Read, Seek, SeekFrom, Write};
+
+use embedded_audio_driver::databus::Databus;
 use embedded_audio_driver::element::Element;
 use embedded_audio_driver::info::Info;
+use embedded_audio_driver::payload::Position;
 use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
 use embedded_audio_driver::Error;
 
@@ -10,8 +13,9 @@ pub struct WavDecoder {
     info: Option<Info>,
     data_start: u64,
     current_position: u64,
-    header_parsed: bool,
     bytes_per_frame: u32,
+    header_parsed: bool,
+    is_first_chunk: bool,
 }
 
 impl WavDecoder {
@@ -23,11 +27,13 @@ impl WavDecoder {
             current_position: 0,
             header_parsed: false,
             bytes_per_frame: 0,
+            is_first_chunk: true,
         }
     }
 
     /// Parse WAV header from input reader
     fn parse_header<R: Read + Seek>(&mut self, reader: &mut R) -> Result<(), Error> {
+        // ... (rest of the function is unchanged)
         let mut header_buf = [0u8; 44];
         reader.read_exact(&mut header_buf).map_err(|_| Error::DeviceError)?;
 
@@ -100,59 +106,6 @@ impl WavDecoder {
         Ok(())
     }
 
-    /// Process data from Reader to Payload
-    async fn process_reader_to_payload<R: Read + Seek, W>(
-        &mut self,
-        in_port: &mut InPort<'_, R>,
-        out_port: &mut OutPort<'_, W>,
-    ) -> Result<(), Error>
-    where
-        W: embedded_io::Write + Seek,
-    {
-        let InPort::Reader(reader) = in_port else {
-            return Err(Error::InvalidParameter);
-        };
-
-        let OutPort::Payload(producer) = out_port else {
-            return Err(Error::InvalidParameter);
-        };
-
-        // Parse header if not done yet
-        if !self.header_parsed {
-            self.parse_header(&mut *reader)?;
-        }
-
-        // Seek to current read position
-        let read_pos = self.data_start + self.current_position;
-        reader.seek(SeekFrom::Start(read_pos)).map_err(|_| Error::DeviceError)?;
-
-        // Acquire payload slot and read data
-        let mut payload = producer.acquire().await;
-        let max_read = payload.len();
-        
-        // Ensure we read complete frames only
-        let aligned_read = if self.bytes_per_frame > 0 {
-            (max_read as u32 / self.bytes_per_frame) * self.bytes_per_frame
-        } else {
-            max_read as u32
-        };
-
-        if aligned_read == 0 {
-            return Err(Error::BufferEmpty);
-        }
-
-        let bytes_read = reader.read(&mut payload[..aligned_read as usize]).map_err(|_| Error::DeviceError)?;
-        
-        if bytes_read == 0 {
-            return Err(Error::BufferEmpty);
-        }
-
-        // Update position tracking
-        self.current_position += bytes_read as u64;
-        
-        Ok(())
-    }
-
     /// Calculate minimum payload size based on audio format
     fn calculate_min_payload_size(&self) -> u32 {
         if let Some(info) = &self.info {
@@ -204,18 +157,73 @@ impl Element for WavDecoder {
         }
     }
 
-    async fn process<R, W>(
-        &mut self, 
-        in_port: &mut InPort<'_, R>, 
-        out_port: &mut OutPort<'_, W>
-    ) -> Result<(), Self::Error>
+    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> Result<(), Self::Error>
     where
         R: Read + Seek,
-        W: embedded_io::Write + Seek,
+        W: Write + Seek,
+        DI: Databus<'a>,
+        DO: Databus<'a>,
     {
-        match in_port {
-            InPort::Reader(_) => {
-                self.process_reader_to_payload(in_port, out_port).await
+        match (in_port, out_port) {
+            (InPort::Reader(reader), OutPort::Payload(databus)) => {
+                if !self.header_parsed {
+                    self.parse_header(reader)?;
+                }
+
+                let read_pos = self.data_start + self.current_position;
+                reader.seek(SeekFrom::Start(read_pos)).map_err(|_| Error::DeviceError)?;
+
+                let mut payload = databus.acquire_write().await;
+                let max_read = payload.len();
+                
+                let aligned_read = if self.bytes_per_frame > 0 {
+                    (max_read as u32 / self.bytes_per_frame) * self.bytes_per_frame
+                } else {
+                    max_read as u32
+                };
+
+                if aligned_read == 0 {
+                    return Err(Error::BufferEmpty);
+                }
+
+                let bytes_read = reader.read(&mut payload[..aligned_read as usize]).map_err(|_| Error::DeviceError)?;
+                
+                if bytes_read == 0 {
+                    return Err(Error::BufferEmpty);
+                }
+
+                // Set the exact number of bytes read into the payload.
+                payload.set_valid_length(bytes_read);
+                self.current_position += bytes_read as u64;
+
+                // Determine if this is the first, middle, or last payload
+                let mut is_last = bytes_read < aligned_read as usize;
+                if !is_last {
+                    if let Some(num_frames) = self.info.as_ref().and_then(|i| i.num_frames) {
+                        let total_data_bytes = num_frames as u64 * self.bytes_per_frame as u64;
+                        if self.current_position >= total_data_bytes {
+                            is_last = true;
+                        }
+                    }
+                }
+                
+                match (self.is_first_chunk, is_last) {
+                    (true, true) => {
+                        payload.set_position(Position::Single);
+                    }
+                    (true, false) => {
+                        payload.set_position(Position::First);
+                        self.is_first_chunk = false;
+                    }
+                    (false, true) => {
+                        payload.set_position(Position::Last);
+                    }
+                    (false, false) => {
+                        payload.set_position(Position::Middle);
+                    }
+                }
+
+                Ok(())
             },
             _ => Err(Error::Unsupported),
         }
@@ -224,40 +232,27 @@ impl Element for WavDecoder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use embedded_audio_driver::slot::Slot;
-    use embedded_audio_driver::port::Dmy;
+    use std::io::Cursor;
     use embedded_io_adapters::std::FromStd;
     use embedded_io::ErrorType;
-    use std::io::Cursor;
 
+    use embedded_audio_driver::port::Dmy;
+    use crate::databus::slot::Slot;
+    use super::*;
+    
     // --- Real File Data Tests ---
     // These tests use a real WAV file included at compile time to verify
     // the decoder's behavior in a realistic scenario.
-
-    // A constant holding the binary data of a real WAV file.
-    // The path should be relative to the current file's location.
     const REAL_WAV_FILE: &[u8] = include_bytes!("../../../res/light-rain.wav");
 
     #[test]
     fn test_metadata_parsing_from_real_file() {
-        // Test case: Ensure the decoder can correctly parse the header metadata
-        // from a standard, real-world WAV file.
-
-        // Create an in-memory reader from the raw byte data.
+        // ... (test is unchanged)
         let mut reader = FromStd::new(Cursor::new(REAL_WAV_FILE));
         let mut decoder = WavDecoder::new();
-
-        // Attempt to parse the header.
         decoder.parse_header(&mut reader).expect("Failed to parse header from real WAV file");
-
-        // Verify that the header was marked as parsed.
         assert!(decoder.header_parsed, "Decoder should confirm header is parsed");
-
-        // Retrieve the parsed information.
         let info = decoder.get_out_info().expect("Output info should be available after parsing");
-
-        // Assert that the metadata matches the known values for the test file.
         assert_eq!(info.sample_rate, 44100, "Sample rate mismatch");
         assert_eq!(info.channels, 2, "Channel count mismatch");
         assert_eq!(info.bits_per_sample, 16, "Bits per sample mismatch");
@@ -266,59 +261,48 @@ mod tests {
     #[tokio::test]
     async fn test_process_reads_data_from_real_file() {
         // Test case: Verify the main `process` function reads audio data into
-        // an output payload and correctly updates its internal state.
+        // an output payload and correctly updates its internal state and metadata.
 
-        // Setup: Create the decoder and parse the header first.
         let mut reader = FromStd::new(Cursor::new(REAL_WAV_FILE));
         let mut decoder = WavDecoder::new();
         decoder.parse_header(&mut reader).expect("Header parsing failed");
 
-        // The data chunk starts after the header.
         let data_start_offset = decoder.data_start;
         assert!(data_start_offset > 0, "Data start offset should be greater than 0");
 
-        // Setup the output port with a buffer (payload).
-        let mut buffer = vec![0u8; 128];
+        let mut buffer = vec![0u8; 1024];
         let slot = Slot::new(Some(&mut buffer));
-        let (producer, _consumer) = slot.split();
 
-        // Create the input and output ports for the `process` function.
-        let mut in_port = InPort::Reader(&mut reader);
-        let mut out_port = OutPort::<Dmy>::Payload(&producer);
+        let mut in_port: InPort<_, Dmy> = InPort::Reader(&mut reader);
+        let mut out_port: OutPort<Dmy, _> = OutPort::Payload(&slot);
 
-        // First process call: Read the first chunk of data.
+        // First process call
         let initial_position = decoder.current_position;
         decoder.process(&mut in_port, &mut out_port).await.unwrap();
         
-        // The decoder's internal position should have advanced.
-        assert!(
-            decoder.current_position > initial_position,
-            "Current position should advance after first read"
-        );
+        assert!(decoder.current_position > initial_position, "Current position should advance after first read");
         let position_after_first_read = decoder.current_position;
 
-        
-        let slot = Slot::new(Some(&mut buffer));
-        let (producer, _consumer) = slot.split();
-        let mut out_port = OutPort::<Dmy>::Payload(&producer);
-
-        // Second process call: Read the next chunk of data.
+        drop(slot.acquire_read().await);
+            
+        // Second process call
         decoder.process(&mut in_port, &mut out_port).await.unwrap();
+        assert!(decoder.current_position > position_after_first_read, "Current position should advance after second read");
 
-        // Verify that the position advanced again, which implicitly tests that
-        // the decoder is correctly tracking its state between calls.
-        assert!(
-            decoder.current_position > position_after_first_read,
-            "Current position should advance after second read"
-        );
+        let final_metadata = slot.get_current_metadata().expect("Metadata should be available after processing");
+        
+        // The decoder should have set the valid length to the number of bytes read.
+        assert!(final_metadata.valid_length > 0, "Payload valid_length should be greater than 0");
+        assert_eq!(final_metadata.valid_length, 1024, "Payload valid_length should be the size of the read");
+
+        // Since we read twice, the position should be Middle.
+        assert_eq!(final_metadata.position, Position::Middle, "Payload position should be Middle");
     }
 
     // --- Mock Data Unit Tests ---
-    // These tests use generated data and a mock reader to perform focused unit tests
-    // on specific parts of the decoder's logic, like handling invalid data.
-
-    /// A mock reader for testing purposes, implementing embedded_io traits.
-    /// This avoids dependency on the file system for unit tests.
+    // ... (These tests do not use `process` and remain unchanged)
+    // A mock reader for testing purposes, implementing embedded_io traits.
+    // This avoids dependency on the file system for unit tests.
     struct MockReader {
         data: Vec<u8>,
         position: u64,
@@ -355,15 +339,12 @@ mod tests {
                 self.position = new_pos;
                 Ok(self.position)
             } else {
-                // Seeking beyond the end is not a hard error in many implementations,
-                // it just clamps to the end. We'll do the same.
                 self.position = self.data.len() as u64;
                 Ok(self.position)
             }
         }
     }
-
-    /// Creates a byte vector representing a minimal, valid WAV header and some silent data.
+    
     fn create_valid_wav_data() -> Vec<u8> {
         let mut data = Vec::new();
         let num_samples = 64;
@@ -400,8 +381,6 @@ mod tests {
 
     #[test]
     fn test_header_parsing_with_mock_data() {
-        // Test case: Ensure the decoder correctly parses a programmatically generated
-        // valid WAV header.
         let wav_data = create_valid_wav_data();
         let mut reader = MockReader::new(wav_data);
         let mut decoder = WavDecoder::new();
@@ -412,7 +391,7 @@ mod tests {
         assert_eq!(info.sample_rate, 44100);
         assert_eq!(info.channels, 2);
         assert_eq!(info.bits_per_sample, 16);
-        assert_eq!(info.num_frames, Some(64)); // 64 samples as defined in create_valid_wav_data
+        assert_eq!(info.num_frames, Some(64));
     }
 
     #[test]
@@ -420,18 +399,10 @@ mod tests {
         // Test case: Ensure the decoder returns an error when given a file with
         // an invalid RIFF header.
         let mut invalid_data = create_valid_wav_data();
-        // Corrupt the header
         invalid_data[0..4].copy_from_slice(b"NOPE");
-
         let mut reader = MockReader::new(invalid_data);
         let mut decoder = WavDecoder::new();
-
         decoder.parse_header(&mut reader).expect_err("Parsing invalid header should fail");
-
-        
-        assert!(
-            !decoder.header_parsed,
-            "header_parsed flag should be false after a failed parse"
-        );
+        assert!(!decoder.header_parsed, "header_parsed flag should be false after a failed parse");
     }
 }
