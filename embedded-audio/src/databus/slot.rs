@@ -143,10 +143,15 @@ impl<'b> Slot<'b> {
     unsafe fn new_payload(&'b self, is_write: bool) -> Payload<'b, Self> {
         Payload::new(
             (*self.buffer.get()).take().unwrap(),
-            (*self.payload_metadata.get()).take().unwrap(),
+            (*self.payload_metadata.get()).take().unwrap_or_default(),
             is_write,
             self,
         )
+    }
+
+    pub fn get_current_metadata(&self) -> Option<Metadata> {
+        // This is safe because we ensure the metadata is set before using it.
+        unsafe { *self.payload_metadata.get() }.clone()
     }
 }
 

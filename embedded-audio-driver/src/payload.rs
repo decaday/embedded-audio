@@ -9,6 +9,15 @@ pub struct Metadata {
     pub valid_length: usize,
 }
 
+impl Default for Metadata {
+    fn default() -> Self {
+        Self {
+            position: Position::default(),
+            valid_length: 0,
+        }
+    }
+}
+
 impl Metadata {
     pub fn new(position: Position, valid_length: usize) -> Self {
         Self {
@@ -19,7 +28,7 @@ impl Metadata {
 }
 
 /// Position of payload in a data sequence
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum Position {
     /// Single complete payload (not part of a sequence)
@@ -29,6 +38,7 @@ pub enum Position {
     /// Last payload in a sequence
     Last,
     /// Middle payload in a sequence
+    #[default]
     Middle,
 }
 
