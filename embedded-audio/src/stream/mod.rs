@@ -1,5 +1,5 @@
 #[cfg(feature = "std")]
-pub mod cpal_stream;
+pub mod cpal_output;
 
 #[cfg(feature = "std")]
-pub use cpal_stream::CpalOutputStream;
+pub use cpal_output::CpalOutputStream;

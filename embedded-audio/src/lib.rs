@@ -4,8 +4,8 @@ pub mod databus;
 pub mod generator;
 pub mod stream;
 // pub mod pipeline;
-// pub mod generator;
-// pub mod utils;
+
+pub mod utils;
 // pub mod ringbuffer;
 // pub mod transform;
 
