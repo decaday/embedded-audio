@@ -18,6 +18,8 @@ pub trait Element {
 
     fn available(&self) -> u32;
 
+    // fn start(&mut self) -> Result<(), Self::Error>;
+
     async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> Result<(), Self::Error>
     where
         R: Read + Seek,

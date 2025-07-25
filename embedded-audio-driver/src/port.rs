@@ -15,6 +15,7 @@ pub enum OutPort<'a, W: Write + Seek, D: Databus<'a>> {
     None,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortRequirement {
     None,
     /// Writer + Seek or Reader + Seek

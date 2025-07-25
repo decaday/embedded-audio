@@ -1,8 +1,17 @@
 use crate::element::Element;
 
+// pub mod i2s;
+// pub mod dac;
 
-pub mod i2s;
-pub mod dac;
+/// Stream errors
+#[derive(Debug)]
+pub enum Error {
+    // TODO:
+    // Custom(E),
+    Unsupported,
+    Timeout,
+}
+
 
 /// Stream states
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -17,57 +26,17 @@ pub enum StreamState {
 /// Common stream operations
 pub trait Stream: Element {
     /// Start the stream
-    fn start(&mut self) -> Result<(), Error>;
+    fn start(&mut self) -> Result<(), Self::Error>;
     
     /// Stop the stream and reset internal state
-    fn stop(&mut self) -> Result<(), Error>;
+    fn stop(&mut self) -> Result<(), Self::Error>;
     
     /// Pause the stream (maintains internal state)
-    fn pause(&mut self) -> Result<(), Error>;
+    fn pause(&mut self) -> Result<(), Self::Error>;
     
     /// Resume a paused stream
-    fn resume(&mut self) -> Result<(), Error>;
+    fn resume(&mut self) -> Result<(), Self::Error>;
     
     /// Get current stream state
     fn get_state(&self) -> StreamState;
-}
-
-/// Input stream interface for audio capture
-/// 
-/// This trait defines operations for audio input streams,
-/// such as microphones, ADC, or file readers.
-pub trait InputStream: Stream {
-    /// Read audio data into the provided buffer
-    /// Returns the number of bytes read
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
-    
-    /// Check if data is available for reading
-    /// Returns the number of bytes available
-    fn available(&self) -> Result<usize, Error>;
-
-    #[cfg(feature = "async")]
-    async fn available(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
-}
-
-/// Output stream interface for audio playback
-/// 
-/// This trait defines operations for audio output streams,
-/// such as speakers, DAC, or file writers.
-pub trait OutputStream: Stream {
-    /// Write audio data from the provided buffer
-    /// Returns the number of bytes written
-    fn write(&mut self, buffer: &[u8]) -> Result<usize, Error>;
-    
-    /// Check if the stream can accept more data
-    /// Returns the number of bytes that can be written
-    fn space_available(&self) -> Result<usize, Error>;
-}
-
-/// Stream errors
-#[derive(Debug)]
-pub enum Error {
-    // TODO:
-    // Custom(E),
-    Unsupported,
-    Timeout,
 }

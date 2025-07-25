@@ -1,4 +1,4 @@
-// pub mod stream;
+pub mod stream;
 // pub mod decoder;
 // pub mod encoder;
 pub mod element;
