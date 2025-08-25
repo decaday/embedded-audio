@@ -1,3 +1,5 @@
+pub mod fmt;
+
 pub mod encoder;
 pub mod decoder;
 pub mod databus;

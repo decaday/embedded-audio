@@ -1,5 +1,3 @@
-use core::panic;
-
 use embedded_io::{Read, Seek, SeekFrom, Write};
 
 use embedded_audio_driver::databus::Databus;

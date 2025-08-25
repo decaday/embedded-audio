@@ -23,17 +23,19 @@ embassy-sync = { version = "0.7.0" }
 # ringbuffer = "0.15.0"
 embedded-io = "0.6"
 ringbuf = { version = "0.4.7", default-features = false }
+cfg-if = {version = "1.0.1", features = ["core"]}
+embassy-sync = { version = "0.7.0" }
+# embassy-time = { version = "0.3.2" }
+
+defmt = { version = "0.3", optional = true }
+log = { version = "0.4.27", default-features = false, optional = true }
 
 cpal = { version = "0.15.3", optional = true }
-cfg-if = {version = "1.0.1", features = ["core"]}
-
 
 [dev-dependencies]
 embedded-io-adapters = { version = "0.6", features = ["std"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 critical-section = { version = "1.2.0", features = ["std"] }
-
-# embassy-executor = { version = "0.6", features = ["task-arena-size-32768", "arch-std", "executor-thread", "log", "integrated-timers"] }
 
 
 [features]
@@ -48,6 +50,7 @@ std = [
     # "embassy-time/std",
     "ringbuf/std",
     "dep:cpal",
+    "log",
 ]
 
 alloc = ["ringbuf/alloc"]
