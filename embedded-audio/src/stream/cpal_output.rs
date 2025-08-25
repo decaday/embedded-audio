@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::SizedSample;
+use embedded_audio_driver::payload::Position;
 use ringbuf::storage::Heap;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::wrap::caching::Caching;
 use ringbuf::{HeapRb, SharedRb};
 
 use embedded_audio_driver::databus::Databus;
-use embedded_audio_driver::element::Element;
+use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
 use embedded_audio_driver::stream::{Stream, StreamState};
@@ -53,8 +54,7 @@ impl Config {
         self.latency_ms
             * info.sample_rate as usize
             / 1000
-            * info.channels as usize
-            * (info.bits_per_sample / 8) as usize
+            * info.get_alignment_bytes() as usize
     }
 
     /// Determines the final ring buffer capacity, ensuring it's sufficient.
@@ -184,13 +184,16 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         &mut self,
         in_port: &mut InPort<'a, R, DI>,
         _out_port: &mut OutPort<'a, W, DO>,
-    ) -> Result<(), Self::Error>
+    ) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
         DI: Databus<'a>,
         DO: Databus<'a>,
     {
+        if self.state != StreamState::Running {
+            return Err(Error::NotInitialized);
+        }
         if let InPort::Payload(databus) = in_port {
             let payload = databus.acquire_read().await;
             let sample_size = std::mem::size_of::<T>();
@@ -210,7 +213,17 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
                     return Err(Error::BufferFull);
                 }
             }
-            Ok(())
+            
+            match payload.metadata.position {
+                Position::Last
+                | Position::Single => {
+                    self.state = StreamState::Stopped;
+                    Ok(Eof)
+                }
+                _ => {
+                    Ok(Fine)
+                }
+            }
         } else {
             Err(Error::Unsupported)
         }

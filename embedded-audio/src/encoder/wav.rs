@@ -1,7 +1,7 @@
 use embedded_io::{Read, Seek, SeekFrom, Write};
 
 use embedded_audio_driver::databus::Databus;
-use embedded_audio_driver::element::Element;
+use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
 use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
@@ -144,7 +144,7 @@ impl Element for WavEncoder {
         u32::MAX
     }
 
-    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> Result<(), Self::Error>
+    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
@@ -159,30 +159,29 @@ impl Element for WavEncoder {
 
                 let payload = databus.acquire_read().await;
 
-                if payload.metadata.valid_length == 0 {
-                    return Ok(()); // Nothing to process
-                }
+                if payload.metadata.valid_length != 0 {
+                    let data_to_write = &payload.data[..payload.metadata.valid_length];
 
-                let data_to_write = &payload.data[..payload.metadata.valid_length];
+                    let aligned_len = if self.bytes_per_frame > 0 {
+                        (data_to_write.len() as u32 / self.bytes_per_frame) * self.bytes_per_frame
+                    } else {
+                        data_to_write.len() as u32
+                    };
 
-                let aligned_len = if self.bytes_per_frame > 0 {
-                    (data_to_write.len() as u32 / self.bytes_per_frame) * self.bytes_per_frame
-                } else {
-                    data_to_write.len() as u32
-                };
-
-                if aligned_len > 0 {
-                    writer.write_all(&data_to_write[..aligned_len as usize]).map_err(|_| Error::DeviceError)?;
-                    let frames_written = aligned_len / self.bytes_per_frame;
-                    self.encoded_samples += frames_written as u64;
+                    if aligned_len > 0 {
+                        writer.write_all(&data_to_write[..aligned_len as usize]).map_err(|_| Error::DeviceError)?;
+                        let frames_written = aligned_len / self.bytes_per_frame;
+                        self.encoded_samples += frames_written as u64;
+                    }
                 }
 
                 // If the payload is the last in a sequence, update the WAV header size fields.
                 if payload.metadata.position == Position::Last || payload.metadata.position == Position::Single {
                     self.update_header_sizes(writer)?;
+                    Ok(Eof)
+                } else {
+                    Ok(Fine)
                 }
-
-                Ok(())
             }
             _ => Err(Error::Unsupported),
         }

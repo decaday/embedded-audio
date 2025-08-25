@@ -20,10 +20,18 @@ pub trait Element {
 
     // fn start(&mut self) -> Result<(), Self::Error>;
 
-    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> Result<(), Self::Error>
+    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
         DI: Databus<'a>,
         DO: Databus<'a>;
 }
+
+pub enum ProcessStatus {
+    Fine,
+    Eof,
+}
+pub use ProcessStatus::{Eof, Fine};
+
+pub type ProcessResult<E> = Result<ProcessStatus, E>;

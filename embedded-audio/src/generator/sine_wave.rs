@@ -2,7 +2,7 @@ use core::f32::consts::PI;
 use embedded_io::{Read, Seek, Write};
 
 use embedded_audio_driver::databus::Databus;
-use embedded_audio_driver::element::Element;
+use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::{Payload, Position};
 use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
@@ -16,6 +16,7 @@ pub struct SineWaveGenerator {
     amplitude: f32,
     current_sample: u64,
     is_first_chunk: bool,
+    total_samples: Option<u64>,
 }
 
 impl SineWaveGenerator {
@@ -44,7 +45,20 @@ impl SineWaveGenerator {
             amplitude: amplitude.clamp(0.0, 1.0),
             current_sample: 0,
             is_first_chunk: true,
+            total_samples: None, // Infinite stream
         }
+    }
+
+    pub fn set_total_samples(&mut self, total_samples: Option<u64>) {
+        self.total_samples = total_samples;
+    }
+
+    pub fn set_total_secs(&mut self, total_secs: Option<f32>) {
+        self.total_samples = total_secs.map(|secs| (secs * self.info.sample_rate as f32) as u64);
+    }
+
+    pub fn set_total_ms(&mut self, total_ms: Option<u32>) {
+        self.total_samples = total_ms.map(|ms| (ms as u64 * self.info.sample_rate as u64) / 1000);
     }
 
     /// Generates a single sample value based on the current position.
@@ -95,7 +109,7 @@ impl Element for SineWaveGenerator {
         &mut self,
         _in_port: &mut InPort<'a, R, DI>,
         out_port: &mut OutPort<'a, W, DO>,
-    ) -> Result<(), Self::Error>
+    ) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
@@ -133,21 +147,47 @@ impl Element for SineWaveGenerator {
                     dest_slice.copy_from_slice(&sample_bytes[..bytes_per_sample]);
                     bytes_written += bytes_per_sample;
                 }
+                if let Some(total) = self.total_samples {
+                    if self.current_sample >= total {
+                        break;
+                    }
+                }
                 self.current_sample += 1;
             }
 
             payload.set_valid_length(bytes_written);
 
-            // Set the position metadata for the payload.
-            if self.is_first_chunk {
-                payload.set_position(Position::First);
-                self.is_first_chunk = false;
-            } else {
-                // Since the stream is infinite, it will always be Middle.
-                payload.set_position(Position::Middle);
-            }
 
-            Ok(())
+            let ended = if let Some(total) = self.total_samples {
+                self.current_sample - 1 >= total
+            } else {
+                false
+            };
+            
+            match (ended, self.is_first_chunk) {
+                (true, true) => {
+                    payload.set_position(Position::Single);
+                    self.is_first_chunk = false;
+                    self.current_sample = 0; // Reset for potential future use
+                    self.total_samples = None; // Clear total samples for infinite mode
+                    return Ok(Eof);
+                }
+                (true, false) => {
+                    payload.set_position(Position::Last);
+                    self.current_sample = 0; // Reset for potential future use
+                    self.total_samples = None; // Clear total samples for infinite mode
+                    return Ok(Eof);
+                }
+                (false, true) => {
+                    payload.set_position(Position::First);
+                    self.is_first_chunk = false;
+                    Ok(Fine)
+                }
+                (false, false) => {
+                    payload.set_position(Position::Middle);
+                    Ok(Fine)
+                }
+            }
         } else {
             Err(Error::Unsupported)
         }

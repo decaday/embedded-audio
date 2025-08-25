@@ -1,7 +1,9 @@
+use core::panic;
+
 use embedded_io::{Read, Seek, SeekFrom, Write};
 
 use embedded_audio_driver::databus::Databus;
-use embedded_audio_driver::element::Element;
+use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
 use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
@@ -157,7 +159,7 @@ impl Element for WavDecoder {
         }
     }
 
-    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> Result<(), Self::Error>
+    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
@@ -183,14 +185,10 @@ impl Element for WavDecoder {
                 };
 
                 if aligned_read == 0 {
-                    return Err(Error::BufferEmpty);
+                    panic!("Payload buffer too small for even one frame");
                 }
 
                 let bytes_read = reader.read(&mut payload[..aligned_read as usize]).map_err(|_| Error::DeviceError)?;
-                
-                if bytes_read == 0 {
-                    return Err(Error::BufferEmpty);
-                }
 
                 // Set the exact number of bytes read into the payload.
                 payload.set_valid_length(bytes_read);
@@ -210,20 +208,22 @@ impl Element for WavDecoder {
                 match (self.is_first_chunk, is_last) {
                     (true, true) => {
                         payload.set_position(Position::Single);
+                        Ok(Eof)
                     }
                     (true, false) => {
                         payload.set_position(Position::First);
                         self.is_first_chunk = false;
+                        Ok(Fine)
                     }
                     (false, true) => {
                         payload.set_position(Position::Last);
+                        Ok(Eof)
                     }
                     (false, false) => {
                         payload.set_position(Position::Middle);
+                        Ok(Fine)
                     }
                 }
-
-                Ok(())
             },
             _ => Err(Error::Unsupported),
         }

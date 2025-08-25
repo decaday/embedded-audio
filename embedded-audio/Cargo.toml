@@ -30,7 +30,7 @@ cfg-if = {version = "1.0.1", features = ["core"]}
 
 [dev-dependencies]
 embedded-io-adapters = { version = "0.6", features = ["std"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 critical-section = { version = "1.2.0", features = ["std"] }
 
 # embassy-executor = { version = "0.6", features = ["task-arena-size-32768", "arch-std", "executor-thread", "log", "integrated-timers"] }
