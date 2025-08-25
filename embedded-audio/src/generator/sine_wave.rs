@@ -129,7 +129,7 @@ impl Element for SineWaveGenerator {
             }
 
             let mut bytes_written = 0;
-
+            let mut ended = false;
             for _ in 0..max_frames {
                 let sample_value = self.generate_sample(self.current_sample);
 
@@ -147,8 +147,10 @@ impl Element for SineWaveGenerator {
                     dest_slice.copy_from_slice(&sample_bytes[..bytes_per_sample]);
                     bytes_written += bytes_per_sample;
                 }
+
                 if let Some(total) = self.total_samples {
                     if self.current_sample >= total {
+                        ended = true;
                         break;
                     }
                 }
@@ -157,25 +159,14 @@ impl Element for SineWaveGenerator {
 
             payload.set_valid_length(bytes_written);
 
-
-            let ended = if let Some(total) = self.total_samples {
-                self.current_sample - 1 >= total
-            } else {
-                false
-            };
-            
             match (ended, self.is_first_chunk) {
                 (true, true) => {
                     payload.set_position(Position::Single);
                     self.is_first_chunk = false;
-                    self.current_sample = 0; // Reset for potential future use
-                    self.total_samples = None; // Clear total samples for infinite mode
                     return Ok(Eof);
                 }
                 (true, false) => {
                     payload.set_position(Position::Last);
-                    self.current_sample = 0; // Reset for potential future use
-                    self.total_samples = None; // Clear total samples for infinite mode
                     return Ok(Eof);
                 }
                 (false, true) => {

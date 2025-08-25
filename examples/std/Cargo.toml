@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# embassy-sync = { version = "0.6", features = ["log"] }
-# embassy-executor = { version = "0.6", features = ["task-arena-size-32768", "arch-std", "executor-thread", "log", "integrated-timers"] }
-# embassy-time = { version = "0.3", features = ["log", "std", ] }
+embassy-sync = { version = "0.7", features = ["log"] }
+embassy-executor = { version = "0.8", features = ["arch-std", "executor-thread", "log"] }
+embassy-time = { version = "0.4", features = ["log", "std", ] }
 
 # hound = "3.5.0"
 # crossterm = "0.26"
@@ -22,3 +22,5 @@ ringbuf = { version = "0.4.7" }
 cpal = { version = "0.15.3" }
 clap = { version = "4.0", features = ["derive"] }
 anyhow = "1.0.95"
+log = { version = "0.4.27", features = ["std"] }
+env_logger = "0.9.0"
