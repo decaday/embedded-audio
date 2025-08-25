@@ -11,13 +11,13 @@ use embedded_audio_driver::payload::{Metadata, Payload};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum State {
-    /// The slot is empty and ready for a producer (SlotProducer) to write to it.
+    /// The slot is empty and ready for a producer to write to it.
     Empty,
-    /// A consumer (SlotConsumer) has acquired the slot and is currently reading from the buffer.
+    /// A consumer has acquired the slot and is currently reading from the buffer.
     Reading,
-    /// A producer (SlotProducer) has acquired the slot and is currently writing to the buffer.
+    /// A producer has acquired the slot and is currently writing to the buffer.
     Writing,
-    /// The slot is full of data and ready for a consumer (SlotConsumer) to read from it.
+    /// The slot is full of data and ready for a consumer to read from it.
     Full,
     /// This state is used when no buffer is set, preventing any operations.
     NoneBuffer,
@@ -218,5 +218,96 @@ impl<'b> Databus<'b> for Slot<'b> {
             self.shared.state.store(State::Empty as u8, Ordering::Release);
             self.shared.producer_waker.wake();    
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use embedded_audio_driver::payload::Position;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn test_slot_acq_rel_and_metadata() {
+        // Test case: Verify the basic acquire-release cycle for both writing and reading,
+        // and ensure that metadata is correctly stored and retrieved.
+
+        let mut buffer = vec![0u8; 1024];
+        let slot = Slot::new(Some(&mut buffer));
+
+        // 1. Producer acquires the slot for writing
+        {
+            let mut write_payload = slot.acquire_write().await;
+            assert_eq!(write_payload.len(), 1024, "Write payload should have the full buffer size");
+
+            // Write some data and set metadata
+            let test_data = [1, 2, 3, 4];
+            write_payload[..4].copy_from_slice(&test_data);
+            write_payload.set_valid_length(4);
+            write_payload.set_position(Position::First);
+        } // write_payload is dropped, which calls release() and sets the state to Full.
+
+        // 2. Verify metadata is stored in the slot after writing
+        let stored_metadata = slot.get_current_metadata().expect("Metadata should be available after write");
+        assert_eq!(stored_metadata.valid_length, 4, "Stored valid_length is incorrect");
+        assert_eq!(stored_metadata.position, Position::First, "Stored position is incorrect");
+
+        // 3. Consumer acquires the slot for reading
+        {
+            let read_payload = slot.acquire_read().await;
+            assert_eq!(read_payload.len(), 1024, "Read payload should have the full buffer size");
+            assert_eq!(read_payload.metadata.valid_length, 4, "Read payload metadata valid_length is incorrect");
+            assert_eq!(read_payload.metadata.position, Position::First, "Read payload metadata position is incorrect");
+
+            // Verify the data
+            assert_eq!(&read_payload[..4], &[1, 2, 3, 4], "Data read does not match data written");
+        } // read_payload is dropped, which calls release() and sets the state back to Empty.
+
+        // 4. Verify we can acquire for writing again, showing the slot has been reset.
+        let _ = slot.acquire_write().await;
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_producer_consumer() {
+        // Test case: Simulate a concurrent scenario where a producer writes to the slot
+        // and a consumer reads from it, ensuring proper synchronization.
+
+        // Leak a heap-allocated buffer to get a 'static mutable reference.
+        let buffer: &'static mut [u8] = Box::leak(Box::new([0u8; 8]));
+        
+        // Leak the Slot itself to get a 'static reference to it. This satisfies the
+        // trait's lifetime requirement where the borrow of the databus must have the
+        // same lifetime as the buffer it contains ('static in this case).
+        let slot: &'static Slot<'static> = Box::leak(Box::new(Slot::new(Some(buffer))));
+
+        // Use a channel to signal completion from the consumer task
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a consumer task. A 'static reference is Copy, so it can be moved.
+        let consumer_handle = tokio::spawn(async move {
+            let payload = slot.acquire_read().await;
+            // Verify the data received from the producer
+            assert_eq!(&payload.data[..payload.metadata.valid_length], &[10, 20, 30]);
+            assert_eq!(payload.metadata.position, Position::Single);
+
+            // Signal that we are done
+            tx.send(()).unwrap();
+        });
+
+        // Spawn a producer task
+        let producer_handle = tokio::spawn(async move {
+            // This task should acquire the slot first as it's initially Empty
+            let mut payload = slot.acquire_write().await;
+            payload.data[0..3].copy_from_slice(&[10, 20, 30]);
+            payload.set_valid_length(3);
+            payload.set_position(Position::Single);
+        });
+
+        // Wait for both tasks to complete
+        producer_handle.await.expect("Producer task failed");
+        consumer_handle.await.expect("Consumer task failed");
+        
+        // Wait for the consumer's completion signal
+        rx.await.expect("Failed to receive completion signal from consumer");
     }
 }
