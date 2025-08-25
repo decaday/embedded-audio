@@ -15,14 +15,10 @@ license = "Apache-2.0"
 # embedded-audio-driver = { version = "0.0.0" }
 embedded-audio-driver = { path = "../embedded-audio-driver" }
 
-defmt = { version = "0.3", optional = true }
-
-embassy-sync = { version = "0.7.0" }
-# embassy-time = { version = "0.3.2" }
-
 # ringbuffer = "0.15.0"
 embedded-io = "0.6"
 ringbuf = { version = "0.4.7", default-features = false }
+async-ringbuf = { version = "0.3", default-features = false }
 cfg-if = {version = "1.0.1", features = ["core"]}
 embassy-sync = { version = "0.7.0" }
 # embassy-time = { version = "0.3.2" }
@@ -40,8 +36,8 @@ critical-section = { version = "1.2.0", features = ["std"] }
 
 [features]
 default = ["std"]
-defmt = ["dep:defmt"]
-# log = ["embassy-sync/log", "embassy-time/log"]
+defmt = ["dep:defmt", "embassy-sync/defmt"]
+log = ["dep:log", "embassy-sync/log"]
 # std = ["embassy-time/std"]
 std = [
     "alloc",
@@ -49,8 +45,9 @@ std = [
     "embedded-audio-driver/std", 
     # "embassy-time/std",
     "ringbuf/std",
+    "async-ringbuf/std",
     "dep:cpal",
     "log",
 ]
 
-alloc = ["ringbuf/alloc"]
+alloc = ["ringbuf/alloc", "async-ringbuf/alloc"]

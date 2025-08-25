@@ -1,14 +1,8 @@
-// cpal_stream.rs
-
-use std::sync::Arc;
-
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::SizedSample;
-use embedded_audio_driver::payload::Position;
-use ringbuf::storage::Heap;
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use ringbuf::wrap::caching::Caching;
-use ringbuf::{HeapRb, SharedRb};
+use embedded_io::{Read, Seek, Write};
+use async_ringbuf::traits::{AsyncProducer, Consumer, Observer, Producer, Split};
+use async_ringbuf::{AsyncHeapRb, AsyncHeapProd};
 
 use embedded_audio_driver::databus::Databus;
 use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
@@ -16,7 +10,8 @@ use embedded_audio_driver::info::Info;
 use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
 use embedded_audio_driver::stream::{Stream, StreamState};
 use embedded_audio_driver::Error;
-use embedded_io::{Read, Seek, Write};
+use embedded_audio_driver::payload::Position;
+
 
 use crate::utils::FromBytes;
 
@@ -82,9 +77,10 @@ impl Config {
 
 /// An output stream that sends audio data to a CPAL device.
 /// It acts as a sink Element in the audio pipeline.
+// Update the struct to use the async producer.
 pub struct CpalOutputStream<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize> {
     stream: cpal::Stream,
-    rb_producer: Caching<Arc<SharedRb<Heap<T>>>, true, false>,
+    rb_producer: AsyncHeapProd<T>, // Use the async producer.
     info: Info,
     state: StreamState,
     _phantom: core::marker::PhantomData<T>,
@@ -106,10 +102,12 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         };
 
         let rb_capacity_samples = config.get_rb_capacity_samples::<T>(&info)?;
-        let ring_buffer = HeapRb::new(rb_capacity_samples);
+        // Create an AsyncHeapRb for asynchronous operations.
+        let ring_buffer = AsyncHeapRb::new(rb_capacity_samples);
         let (mut producer, mut consumer) = ring_buffer.split();
 
         // Pre-fill the buffer with silence to satisfy the initial latency requirement.
+        // try_push is still available on the async producer for non-blocking pushes.
         let min_samples_to_fill = config.get_rb_min_capacity_bytes(&info) / std::mem::size_of::<T>();
         for _ in 0..min_samples_to_fill {
             producer
@@ -120,9 +118,12 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         let err_fn = move |err| eprintln!("an error occurred on the output audio stream: {}", err);
 
         // This closure is called by CPAL to get more audio samples.
+        // It runs on a separate, high-priority audio thread and MUST NOT block or be async.
         let output_data_fn = move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             let mut input_fell_behind = false;
             for sample in data {
+                // Use non-blocking try_pop. If the buffer is empty, we fill with silence.
+                // This prevents audio glitches if the processing pipeline can't keep up.
                 *sample = match consumer.try_pop() {
                     Some(s) => s,
                     None => {
@@ -176,10 +177,12 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
 
     /// Returns the number of bytes that can be written to the internal buffer.
     fn available(&self) -> u32 {
+        // vacant_len() is still available on the async producer.
         (self.rb_producer.vacant_len() * std::mem::size_of::<T>()) as u32
     }
 
-    /// Processes an input payload, copying its data into the ring buffer for playback.
+    /// Processes an input payload, pushing its data into the ring buffer for playback.
+    /// This async method will now wait (yield) if the ring buffer is full.
     async fn process<'a, R, W, DI, DO>(
         &mut self,
         in_port: &mut InPort<'a, R, DI>,
@@ -198,19 +201,20 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
             let payload = databus.acquire_read().await;
             let sample_size = std::mem::size_of::<T>();
 
-            // Ensure we don't try to write more than the valid data in the payload.
-            let bytes_to_read = self.available().min(payload.metadata.valid_length as u32) as usize;
-
-            if bytes_to_read > 0 {
-                let samples_written = payload.data[..bytes_to_read]
-                    .chunks_exact(sample_size)
-                    .map(|chunk| T::from_le_bytes(chunk.try_into().unwrap()))
-                    .try_for_each(|sample| self.rb_producer.try_push(sample));
-
-                if samples_written.is_err() {
-                    // This could happen if the buffer fills up between the `available()` check
-                    // and the push, which is unlikely but possible in concurrent scenarios.
-                    return Err(Error::BufferFull);
+            // Create an iterator over the samples in the valid part of the payload.
+            let samples = payload.data[..payload.metadata.valid_length as usize]
+                .chunks_exact(sample_size)
+                .map(|chunk| T::from_le_bytes(chunk.try_into().unwrap()));
+            
+            // Iterate over samples and push them to the async ring buffer.
+            for sample in samples {
+                // .await here will pause the execution if the ring buffer is full,
+                // and resume when there is space available. This provides back-pressure.
+                if self.rb_producer.push(sample).await.is_err() {
+                    // This error occurs if the consumer (audio thread) is dropped,
+                    // which means the stream has been closed.
+                    self.state = StreamState::Stopped;
+                    return Err(Error::DeviceError); 
                 }
             }
             
