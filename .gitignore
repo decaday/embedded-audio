@@ -1,5 +1,7 @@
 **/target/
 **/temp/
+tmp/
+**/Cargo.lock
 
 .vscode/
 .idea/
