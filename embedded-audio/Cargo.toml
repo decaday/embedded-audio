@@ -30,7 +30,7 @@ cpal = { version = "0.15.3", optional = true }
 
 [dev-dependencies]
 embedded-io-adapters = { version = "0.6", features = ["std"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "full"] }
 critical-section = { version = "1.2.0", features = ["std"] }
 
 
