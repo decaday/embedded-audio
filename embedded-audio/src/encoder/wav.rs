@@ -4,7 +4,7 @@ use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirement};
+use embedded_audio_driver::port::{Dmy, InPlacePort, InPort, OutPort, PortRequirements};
 use embedded_audio_driver::Error;
 
 /// WAV encoder that implements the Element trait.
@@ -15,6 +15,7 @@ pub struct WavEncoder {
     header_written: bool,
     data_size_pos: u64,
     bytes_per_frame: u32,
+    port_requirements: Option<PortRequirements>,
 }
 
 impl WavEncoder {
@@ -26,6 +27,7 @@ impl WavEncoder {
             header_written: false,
             data_size_pos: 0,
             bytes_per_frame: 0,
+            port_requirements: None,
         }
     }
 
@@ -132,16 +134,51 @@ impl Element for WavEncoder {
         None
     }
 
-    fn get_in_port_requirement(&self) -> PortRequirement {
-        PortRequirement::Payload { min_size: self.calculate_min_payload_size() }
-    }
-
-    fn get_out_port_requirement(&self) -> PortRequirement {
-        PortRequirement::IO
+    fn need_writer(&self) -> bool {
+        true
     }
 
     fn available(&self) -> u32 {
         u32::MAX
+    }
+
+    fn get_port_requirements(&self) -> PortRequirements {
+        self.port_requirements.expect("must called after initialize")
+    }
+
+    async fn initialize<'a, R, W>(
+        &mut self,
+        in_port: &mut InPort<'a, R, Dmy>,
+        out_port: &mut OutPort<'a, W, Dmy>,
+        upstream_info: Option<Info>,
+    ) -> Result<PortRequirements, Self::Error>
+    where
+        R: Read + Seek,
+        W: Write + Seek,
+    {
+        let _ = in_port;
+        let _ = out_port;
+
+        if let Some(info) = upstream_info {
+            self.set_info(info)?;
+        } else {
+            return Err(Error::InvalidParameter);
+        }
+
+        let min_payload_size = self.calculate_min_payload_size();
+        self.port_requirements = Some(PortRequirements::new_payload_to_writer(min_payload_size as u16));
+        Ok(self.port_requirements.unwrap())
+    }
+
+    async fn reset(&mut self) -> Result<(), Self::Error> {
+        self.info = None;
+        self.encoded_samples = 0;
+        self.port_requirements = None;
+        self.header_written = false;
+        self.data_size_pos = 0;
+        self.bytes_per_frame = 0;
+
+        Ok(())
     }
 
     async fn process<'a, R, W, C, P, T>(

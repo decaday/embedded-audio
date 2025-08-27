@@ -41,10 +41,6 @@ async fn playback_wav() {
         device,
         config,
     ).expect("Failed to create CPAL output stream");
-    
-    // The stream must be started to begin playback.
-    cpal_stream.start().expect("Failed to start CPAL stream");
-    info!("CPAL stream started.");
 
     // 3. Create the source element: a WavDecoder.
     // Load the WAV file data from an included byte slice.
@@ -60,18 +56,23 @@ async fn playback_wav() {
     let mut dec_out_port = slot.out_port();
     
     let mut stream_in_port = slot.in_port();
-    let mut stream_out_port = OutPort::new_none();
-    let mut inplace_port = InPlacePort::new_none();
+    
+    let mut empty_inplace_port = InPlacePort::new_none();
+    let mut empty_in_port = InPort::new_none();
+    let mut empty_out_port = OutPort::new_none();
+    
+    decoder.initialize(&mut dec_in_port, &mut empty_out_port, None).await.unwrap();
+    cpal_stream.initialize(&mut empty_in_port, &mut empty_out_port, decoder.get_out_info()).await.unwrap();
+    
+    cpal_stream.start().expect("Failed to start CPAL stream");
 
-    // 5. Run the processing loop.
-    // This loop will continue until the decoder reaches the end of the file.
     info!("Starting playback loop...");
     loop {
         // Process the decoder to fill the slot with audio data.
-        decoder.process(&mut dec_in_port, &mut dec_out_port, &mut inplace_port).await.unwrap();
+        decoder.process(&mut dec_in_port, &mut dec_out_port, &mut empty_inplace_port).await.unwrap();
 
         // Process the CPAL stream to consume the data from the slot.
-        match cpal_stream.process(&mut stream_in_port, &mut stream_out_port, &mut inplace_port).await.unwrap() {
+        match cpal_stream.process(&mut stream_in_port, &mut empty_out_port, &mut empty_inplace_port).await.unwrap() {
             Eof => {
                 info!("Reached end of WAV file.");
                 break;

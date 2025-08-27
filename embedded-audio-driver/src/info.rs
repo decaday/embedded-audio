@@ -14,7 +14,7 @@ pub struct Info {
 
     /// The total number of audio frames.
     /// This is `None` if the number of frames is unknown.
-    pub num_frames: Option<u32>,
+    pub num_frames: Option<u64>,
 }
 
 impl Default for Info {
@@ -29,6 +29,38 @@ impl Default for Info {
 }
 
 impl Info {
+    /// Creates a new `Info` instance with the specified parameters.
+    /// 
+    /// # Parameters
+    /// - `sample_rate`: The sample rate in Hz. 1 for mono, 2 for stereo.
+    /// - `channels`: The number of audio channels.
+    /// - `bits_per_sample`: The number of bits per sample.
+    /// - `num_frames`: The total number of audio frames, or `None` if unknown.
+    pub fn new(sample_rate: u32, channels: u8, bits_per_sample: u8, num_frames: Option<u64>) -> Self {
+        Self {
+            sample_rate,
+            channels,
+            bits_per_sample,
+            num_frames,
+        }
+    }
+
+    pub fn set_duration_ms(&mut self, duration_ms: u32) {
+        self.num_frames = Some(((duration_ms * self.sample_rate) / 1000) as _);
+    }
+
+    pub fn set_num_frames(&mut self, num_frames: u64) {
+        self.num_frames = Some(num_frames);
+    }
+
+    pub fn set_duration_s(&mut self, duration_s: f32) {
+        self.num_frames = Some((duration_s * self.sample_rate as f32) as _);
+    }
+
+    pub fn vaild(&self) -> bool {
+        self.sample_rate > 0 && self.channels > 0 && self.bits_per_sample > 0 && (self.bits_per_sample % 8 == 0)
+    }
+
     pub fn get_alignment_bytes(&self) -> u8 {
         (self.bits_per_sample as u32 * self.channels as u32 / 8) as u8
     }
@@ -38,7 +70,7 @@ impl Info {
     }
 
     pub fn get_duration_ms(&self) -> Option<u32> {
-        self.num_frames.map(|frames| (frames * 1000) / self.sample_rate)
+        self.num_frames.map(|frames| ((frames * 1000) / self.sample_rate as u64) as _)
     }
 
     pub fn down_to_alignment<T>(&self, data: T) -> T 

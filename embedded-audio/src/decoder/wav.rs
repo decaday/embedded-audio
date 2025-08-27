@@ -4,7 +4,7 @@ use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirement};
+use embedded_audio_driver::port::{Dmy, InPlacePort, InPort, OutPort, PortRequirements};
 use embedded_audio_driver::Error;
 
 /// WAV decoder that implements the Element trait.
@@ -12,6 +12,7 @@ use embedded_audio_driver::Error;
 pub struct WavDecoder {
     info: Option<Info>,
     data_start: u64,
+    port_requirements: Option<PortRequirements>,
     current_position: u64,
     bytes_per_frame: u32,
     header_parsed: bool,
@@ -28,6 +29,7 @@ impl WavDecoder {
             header_parsed: false,
             bytes_per_frame: 0,
             is_first_chunk: true,
+            port_requirements: None,
         }
     }
 
@@ -90,7 +92,7 @@ impl WavDecoder {
         // Calculate number of frames if data chunk size is available
         let data_chunk_size = u32::from_le_bytes([header_buf[40], header_buf[41], header_buf[42], header_buf[43]]);
         let num_frames = if self.bytes_per_frame > 0 && data_chunk_size > 0 {
-            Some(data_chunk_size / self.bytes_per_frame)
+            Some((data_chunk_size / self.bytes_per_frame) as u64)
         } else {
             None
         };
@@ -131,12 +133,12 @@ impl Element for WavDecoder {
         self.info
     }
 
-    fn get_in_port_requirement(&self) -> PortRequirement {
-        PortRequirement::IO
+    fn need_reader(&self) -> bool {
+        true
     }
 
-    fn get_out_port_requirement(&self) -> PortRequirement {
-        PortRequirement::Payload { min_size: self.calculate_min_payload_size() }
+    fn get_port_requirements(&self) -> PortRequirements {
+        self.port_requirements.expect("must called after initialize")
     }
 
     fn available(&self) -> u32 {
@@ -157,6 +159,42 @@ impl Element for WavDecoder {
         }
     }
 
+    async  fn initialize<'a, R, W>(
+            &mut self,
+            in_port: &mut InPort<'a, R, Dmy>,
+            out_port: &mut OutPort<'a, W, Dmy>,
+            _upstream_info: Option<Info>,
+        ) -> Result<PortRequirements, Self::Error>
+        where
+            R: Read + Seek,
+            W: Write + Seek {
+         match (in_port, out_port) {
+            (InPort::Reader(reader), _) => {
+                if !self.header_parsed {
+                    self.parse_header(reader)?;
+                    self.port_requirements = Some(
+                        PortRequirements::new_reader_to_payload(self.calculate_min_payload_size() as u16)
+                    );
+                    Ok(self.port_requirements.unwrap())
+                } else {
+                    Err(Error::InvalidState)
+                }
+            },
+            _ => Err(Error::Unsupported),
+         }
+    }
+
+    async  fn reset(&mut self) -> Result<(), Self::Error> {
+        self.info = None;
+        self.data_start = 0;
+        self.current_position = 0;
+        self.header_parsed = false;
+        self.bytes_per_frame = 0;
+        self.is_first_chunk = true;
+        self.port_requirements = None;
+        Ok(())
+    }
+
     async fn process<'a, R, W, C, P, T>(
         &mut self,
         in_port: &mut InPort<'a, R, C>,
@@ -173,7 +211,7 @@ impl Element for WavDecoder {
         match (in_port, out_port) {
             (InPort::Reader(reader), OutPort::Producer(producer)) => {
                 if !self.header_parsed {
-                    self.parse_header(reader)?;
+                    return Err(Error::InvalidState);
                 }
 
                 let read_pos = self.data_start + self.current_position;

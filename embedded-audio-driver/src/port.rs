@@ -1,5 +1,5 @@
-// Use statements to import all necessary types at the top.
 use embedded_io::{Read, Seek, Write};
+
 use crate::databus::{Consumer, Producer, Transformer};
 use crate::payload::{Metadata, ReadPayload, TransformPayload, WritePayload};
 
@@ -70,17 +70,94 @@ impl InPlacePort<'_, Dmy> {
     }
 }
 
-/// Describes the data transfer requirements for an `Element`'s port.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PortRequirement {
-    /// No port is required for this operation.
-    None,
-    /// Requires a source/sink that implements `Read`/`Write` + `Seek`.
-    IO,
-    /// Requires a databus that can handle payloads of at least `min_size` bytes.
-    Payload { min_size: u32 },
-    /// Requires a databus that supports in-place transformations with payloads of at least `min_size` bytes.
-    InPlace { min_size: u32 },
+/// The data transfer requirements for an `Element`'s port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortRequirements {
+    pub writer: bool,
+    pub reader: bool,
+    pub in_payload: Option<u16>,
+    pub out_payload: Option<u16>,
+    pub in_place: Option<u16>,
+}
+
+impl PortRequirements {
+    pub fn new() -> Self {
+        Self {
+            writer: false,
+            reader: false,
+            in_payload: None,
+            out_payload: None,
+            in_place: None,
+        }
+    }
+
+    pub fn new_reader_to_payload(size: u16) -> Self {
+        Self {
+            writer: false,
+            reader: true,
+            in_payload: Some(size),
+            out_payload: None,
+            in_place: None,
+        }
+    }
+
+    pub fn new_payload_to_writer(size: u16) -> Self {
+        Self {
+            writer: true,
+            reader: false,
+            in_payload: None,
+            out_payload: Some(size),
+            in_place: None,
+        }
+    }
+
+    pub fn new_payload_to_payload(in_size: u16, out_size: u16) -> Self {
+        Self {
+            writer: true,
+            reader: true,
+            in_payload: Some(in_size),
+            out_payload: Some(out_size),
+            in_place: None,
+        }
+    }
+
+    pub fn new_in_place(size: u16) -> Self {
+        Self {
+            writer: false,
+            reader: true,
+            in_payload: None,
+            out_payload: None,
+            in_place: Some(size),
+        }
+    }
+
+    pub fn sink(size: u16) -> Self {
+        Self {
+            writer: false,
+            reader: false,
+            in_payload: Some(size),
+            out_payload: None,
+            in_place: None,
+        }
+    }
+
+    pub fn source(size: u16) -> Self {
+        Self {
+            writer: false,
+            reader: false,
+            in_payload: None,
+            out_payload: Some(size),
+            in_place: None,
+        }
+    }
+    
+    pub fn need_writer(&self) -> bool {
+        self.writer
+    }
+
+    pub fn need_reader(&self) -> bool {
+        self.reader
+    }
 }
 
 /// A dummy struct used as a placeholder for unused generic type parameters

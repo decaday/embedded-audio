@@ -3,7 +3,7 @@ use embedded_io::{Read, Seek, Write};
 // Use statements to import all necessary types at the top.
 use crate::databus::{Consumer, Producer, Transformer};
 use crate::info::Info;
-use crate::port::{InPlacePort, InPort, OutPort, PortRequirement};
+use crate::port::{Dmy, InPlacePort, InPort, OutPort, PortRequirements};
 
 /// The core trait for any audio processing unit in the pipeline.
 ///
@@ -23,15 +23,47 @@ pub trait Element {
     /// Returns `None` if this is a sink element.
     fn get_out_info(&self) -> Option<Info>;
 
-    /// Describes the requirements for the input port.
-    fn get_in_port_requirement(&self) -> PortRequirement;
+    /// Could be called before `initialize`
+    fn need_writer(&self) -> bool {
+        false
+    }
+    /// Could be called before `initialize`
+    fn need_reader(&self) -> bool {
+        false
+    }
 
-    /// Describes the requirements for the output port.
-    fn get_out_port_requirement(&self) -> PortRequirement;
+    /// MUST be called after `initialize`
+    fn get_port_requirements(&self) -> PortRequirements;
 
     /// Returns the amount of available data for processing.
     /// The unit (e.g., bytes, frames) depends on the element's nature.
     fn available(&self) -> u32;
+
+    async fn initialize<'a, R, W>(
+        &mut self,
+        in_port: &mut InPort<'a, R, Dmy>,
+        out_port: &mut OutPort<'a, W, Dmy>,
+        upstream_info: Option<Info>,
+    ) -> Result<PortRequirements, Self::Error>
+    where
+        R: Read + Seek,
+        W: Write + Seek
+    {
+        let _ = in_port;
+        let _ = out_port;
+        let _ = upstream_info;
+        Ok(self.get_port_requirements())
+    }
+
+    /// Flushes any internal buffers
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Resets the internal state and info of the element.
+    async fn reset(&mut self) -> Result<(), Self::Error> {
+        self.flush().await
+    }
 
     /// The main asynchronous processing function.
     ///

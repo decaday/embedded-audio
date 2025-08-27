@@ -44,6 +44,7 @@ std = [
     "embedded-io/std", 
     "embedded-audio-driver/std", 
     # "embassy-time/std",
+    "embassy-sync/std",
     "ringbuf/std",
     "async-ringbuf/std",
     "dep:cpal",

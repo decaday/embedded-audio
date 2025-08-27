@@ -1,6 +1,7 @@
 use std::fs::File;
 
 use embassy_executor::Spawner;
+use embedded_audio_driver::info::Info;
 use embedded_io_adapters::std::FromStd;
 use log::*;
 
@@ -19,14 +20,18 @@ async fn generate_wav() {
     info!("Starting WAV generation task...");
 
     // 1. Create the source element: a sine wave generator with parameters defined inline.
-    let mut generator = SineWaveGenerator::new(
+    let info = Info::new(
         44100, // sample_rate
-        2,     // channels
-        16,    // bits_per_sample
+        2, // channels
+        16, // bits_per_sample
+        None // num_frames, we set it later by duration
+    );
+    let mut generator = SineWaveGenerator::new(
+        info,
         440.0, // frequency (A4 note)
         0.5,   // amplitude (50%)
     );
-    generator.set_total_secs(Some(2f32)); // Generate 2 seconds of audio
+    generator.set_duration_s(2f32); // Generate 2 seconds of audio
 
     // Retrieve audio format info from the generator.
     let info = generator.get_out_info().expect("Generator should provide output info");
@@ -54,23 +59,26 @@ async fn generate_wav() {
     let slot = Slot::new(Some(&mut buffer), false);
     // 4. Set up the ports for the processing loop.
     // The generator has no input and outputs to the slot.
-    let mut gen_in_port = InPort::new_none();
     let mut gen_out_port = slot.out_port();
 
     // The encoder takes input from the slot and outputs to the file writer.
     let mut enc_in_port = slot.in_port();
     let mut enc_out_port = OutPort::new_writer(&mut file_writer);
-    let mut inplace_port = InPlacePort::new_none();
+    
+    let mut empty_inplace_port = InPlacePort::new_none();
+    let mut empty_in_port = InPort::new_none();
+    let mut empty_out_port = OutPort::new_none();
 
-    // The main processing loop.
-    // It runs until the generator signals the end of the audio stream.
+    generator.initialize(&mut empty_in_port, &mut empty_out_port, None).await.unwrap();
+    encoder.initialize(&mut empty_in_port, &mut empty_out_port, generator.get_out_info()).await.unwrap();
+
     info!("Starting processing loop...");
     loop {
         // Process the generator to fill the slot with audio data.
-        generator.process(&mut gen_in_port, &mut gen_out_port, &mut inplace_port).await.unwrap();
+        generator.process(&mut empty_in_port, &mut gen_out_port, &mut empty_inplace_port).await.unwrap();
 
         // Process the encoder to write the data from the slot to the file.
-        match encoder.process(&mut enc_in_port, &mut enc_out_port, &mut inplace_port).await.unwrap() {
+        match encoder.process(&mut enc_in_port, &mut enc_out_port, &mut empty_inplace_port).await.unwrap() {
             Eof => {
                 info!("Reached end of audio generation.");
                 break;

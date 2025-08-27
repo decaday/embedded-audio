@@ -24,6 +24,8 @@ pub enum Error {
     InvalidParameter,
     /// Device is not initialized
     NotInitialized,
+    /// Device is in an invalid state for the requested operation
+    InvalidState,
     /// Device is busy
     Busy,
     /// Operation timed out
