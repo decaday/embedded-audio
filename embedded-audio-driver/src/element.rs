@@ -1,37 +1,77 @@
-use embedded_io::{Read, Write, Seek};
+use embedded_io::{Read, Seek, Write};
 
-use crate::databus::Databus;
+// Use statements to import all necessary types at the top.
+use crate::databus::{Consumer, Producer, Transformer};
 use crate::info::Info;
-use crate::port::{InPort, OutPort, PortRequirement};
+use crate::port::{InPlacePort, InPort, OutPort, PortRequirement};
 
+/// The core trait for any audio processing unit in the pipeline.
+///
+/// An `Element` can be a source (generator), a sink (encoder, output stream),
+/// or a transformation (filter, gain). It processes data by receiving it from
+/// an `InPort` and sending it to an `OutPort`.
 #[allow(async_fn_in_trait)]
 pub trait Element {
+    // TODO
     type Error;
 
+    /// Returns the audio format information expected at the input.
+    /// Returns `None` if this is a source element.
     fn get_in_info(&self) -> Option<Info>;
 
+    /// Returns the audio format information produced at the output.
+    /// Returns `None` if this is a sink element.
     fn get_out_info(&self) -> Option<Info>;
 
-    fn get_in_port_requriement(&self) -> PortRequirement;
+    /// Describes the requirements for the input port.
+    fn get_in_port_requirement(&self) -> PortRequirement;
 
-    fn get_out_port_requriement(&self) -> PortRequirement;
+    /// Describes the requirements for the output port.
+    fn get_out_port_requirement(&self) -> PortRequirement;
 
+    /// Returns the amount of available data for processing.
+    /// The unit (e.g., bytes, frames) depends on the element's nature.
     fn available(&self) -> u32;
 
-    // fn start(&mut self) -> Result<(), Self::Error>;
-
-    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> ProcessResult<Self::Error>
+    /// The main asynchronous processing function.
+    ///
+    /// It takes an `InPort` and an `OutPort` and performs one step of data
+    /// processing. The implementation will match on the port types to handle
+    /// different kinds of connections (IO-based or databus-based).
+    ///
+    /// # In-Place Transformation (Zero-Copy)
+    ///
+    /// To perform an in-place transformation, an `Element`'s `process` method
+    /// should be called with its `InPort::Consumer` and `OutPort::Producer`
+    /// ports connected to the *same* databus instance.
+    ///
+    /// The `Element` implementation can then detect this condition (e.g., by
+    /// comparing pointers) and safely cast the databus to the `Transformer` trait
+    /// to acquire a mutable payload for in-place modification, thus achieving
+    /// zero-copy processing. If the ports are connected to different databuses,
+    /// the element should fall back to a copy-based approach.
+    async fn process<'a, R, W, C, P, T>(
+        &mut self,
+        in_port: &mut InPort<'a, R, C>,
+        out_port: &mut OutPort<'a, W, P>,
+        inplace_port: &mut InPlacePort<'a, T>,
+    ) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
-        DI: Databus<'a>,
-        DO: Databus<'a>;
+        C: Consumer<'a>,
+        P: Producer<'a>,
+        T: Transformer<'a>;
 }
 
+/// Represents the status of a `process` call.
 pub enum ProcessStatus {
+    /// The processing step completed successfully, and more data may follow.
     Fine,
+    /// The element has reached the end of its data stream.
     Eof,
 }
 pub use ProcessStatus::{Eof, Fine};
 
+/// A convenient type alias for the result of a `process` call.
 pub type ProcessResult<E> = Result<ProcessStatus, E>;

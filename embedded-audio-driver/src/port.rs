@@ -1,31 +1,63 @@
-use embedded_io::{Read, Write, Seek};
+// Use statements to import all necessary types at the top.
+use embedded_io::{Read, Seek, Write};
+use crate::databus::{Consumer, Producer, Transformer};
+use crate::payload::{Metadata, ReadPayload, TransformPayload, WritePayload};
 
-use crate::databus::Databus; 
-use crate::payload::{Metadata, Payload};
-
-pub enum InPort<'a, R: Read + Seek, D: Databus<'a>> {
+/// Represents an input port for an `Element`.
+///
+/// An `Element` can receive data either from a standard `Read + Seek` source
+/// or from a `Consumer`, which provides data payloads.
+pub enum InPort<'a, R: Read + Seek, C: Consumer<'a>> {
+    /// An input source that implements the `Read` and `Seek` traits.
     Reader(&'a mut R),
-    Payload(&'a D),
+    /// An upstream databus component that implements the `Consumer` trait.
+    Consumer(&'a C),
+    /// Represents no input, typically for source elements like generators.
     None,
 }
 
-pub enum OutPort<'a, W: Write + Seek, D: Databus<'a>> {
+/// Represents an output port for an `Element`.
+///
+/// An `Element` can send data either to a standard `Write + Seek` sink
+/// or to a `Producer`, which accepts data payloads.
+pub enum OutPort<'a, W: Write + Seek, P: Producer<'a>> {
+    /// An output sink that implements the `Write` and `Seek` traits.
     Writer(&'a mut W),
-    Payload(&'a D),
+    /// A downstream databus component that implements the `Producer` trait.
+    Producer(&'a P),
+    /// Represents no output, typically for sink elements.
     None,
 }
 
+/// Represents an in-place transformation port for an `Element`.
+///
+/// An `Element` can perform in-place transformations using a `Transformer`.
+/// This is typically used for effects or filters that modify data in place.
+pub enum InPlacePort<'a, T: Transformer<'a>> {
+    /// An upstream databus component that implements the `Transformer` trait.
+    Transformer(&'a T),
+    /// Represents no in-place transformation, typically for elements that do not modify data in place.
+    None,
+}
+
+/// Describes the data transfer requirements for an `Element`'s port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortRequirement {
+    /// No port is required for this operation.
     None,
-    /// Writer + Seek or Reader + Seek
+    /// Requires a source/sink that implements `Read`/`Write` + `Seek`.
     IO,
-    /// payload min size
-    Payload(u32),
+    /// Requires a databus that can handle payloads of at least `min_size` bytes.
+    Payload { min_size: u32 },
+    /// Requires a databus that supports in-place transformations with payloads of at least `min_size` bytes.
+    InPlace { min_size: u32 },
 }
 
-/// Dummy implementation of Databus, Read, Write, and Seek traits
+/// A dummy struct used as a placeholder for unused generic type parameters
+/// in `InPort` and `OutPort` when a port is not of a databus or IO type.
 pub struct Dmy;
+
+// --- Dummy Trait Implementations for Dmy ---
 
 impl embedded_io::ErrorType for Dmy {
     type Error = core::convert::Infallible;
@@ -53,17 +85,32 @@ impl Seek for Dmy {
     }
 }
 
-
-impl<'b> Databus<'b> for Dmy {
-    async fn acquire_read(&'b self) -> Payload<'b, Dmy> where Dmy: 'b {
+// Dmy needs to implement the databus traits to be used as a generic placeholder.
+// These implementations will panic if ever called.
+impl<'a> Consumer<'a> for Dmy {
+    async fn acquire_read(&'a self) -> ReadPayload<'a, Self> {
         unimplemented!()
     }
-
-    async fn acquire_write(&'b self) -> Payload<'b, Dmy> where Dmy: 'b {
+    fn release_read(&self, _consumed_bytes: usize) {
         unimplemented!()
     }
-    
-    fn release(&self, _buf: &'b mut [u8], _metadata: Metadata, _is_write: bool) {
+}
+
+impl<'a> Producer<'a> for Dmy {
+    async fn acquire_write(&'a self) -> WritePayload<'a, Self> {
+        unimplemented!()
+    }
+    fn release_write(&self, _buf: &'a mut [u8], _metadata: Metadata) {
+        unimplemented!()
+    }
+}
+
+// The dummy implementation must also include the Transformer trait.
+impl<'a> Transformer<'a> for Dmy {
+    async fn acquire_transform(&'a self) -> TransformPayload<'a, Self> {
+        unimplemented!()
+    }
+    fn release_transform(&self, _buf: &'a mut [u8], _metadata: Metadata) {
         unimplemented!()
     }
 }

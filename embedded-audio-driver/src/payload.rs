@@ -1,21 +1,47 @@
-use crate::databus::Databus;
+use core::ops::{Deref, DerefMut};
 
-/// Metadata for payload data, including position and length information
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Metadata {
-    /// Position of this payload in a sequence
-    pub position: Position,
-    /// Length of valid data in the payload buffer
-    pub valid_length: usize,
+macro_rules! impl_deref_to_data_with_valid_length {
+    ($struct_name:ident, <'a, $g:ident: $trait:path>) => {
+        impl<'a, $g: $trait> Deref for $struct_name<'a, $g> {
+            type Target = [u8];
+            /// Dereferences to a slice containing only the valid data.
+            fn deref(&self) -> &Self::Target {
+                &self.data[..self.metadata.valid_length]
+            }
+        }
+    };
 }
 
-impl Default for Metadata {
-    fn default() -> Self {
-        Self {
-            position: Position::default(),
-            valid_length: 0,
+macro_rules! impl_deref_to_full_data {
+    ($struct_name:ident, <'a, $g:ident: $trait:path>) => {
+        impl<'a, $g: $trait> Deref for $struct_name<'a, $g> {
+            type Target = [u8];
+            fn deref(&self) -> &Self::Target {
+                self.data
+            }
         }
-    }
+    };
+}
+
+macro_rules! impl_deref_mut_to_full_data {
+    ($struct_name:ident, <'a, $g:ident: $trait:path>) => {
+        impl<'a, $g: $trait> DerefMut for $struct_name<'a, $g> {
+            fn deref_mut(&mut self) -> &mut <Self as Deref>::Target {
+                self.data
+            }
+        }
+    };
+}
+
+use crate::databus::{Consumer, Producer, Transformer};
+
+/// Metadata for payload data, including position and length information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Metadata {
+    /// Position of this payload in a sequence.
+    pub position: Position,
+    /// Length of valid data in the payload buffer, in bytes.
+    pub valid_length: usize,
 }
 
 impl Metadata {
@@ -27,99 +53,123 @@ impl Metadata {
     }
 }
 
-/// Position of payload in a data sequence
+/// Position of a payload within a data sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum Position {
-    /// Single complete payload (not part of a sequence)
+    /// A single, complete payload (not part of a sequence).
     Single,
-    /// First payload in a sequence
+    /// The first payload in a sequence.
     First,
-    /// Last payload in a sequence
+    /// The last payload in a sequence.
     Last,
-    /// Middle payload in a sequence
+    /// A middle payload in a sequence.
     #[default]
     Middle,
 }
 
-impl From<Position> for u8 {
-    fn from(position: Position) -> Self {
-        position as u8
-    }
-}
+// --- Read Payload ---
 
-impl TryFrom<u8> for Position {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            x if x == Position::Single as u8 => Ok(Position::Single),
-            x if x == Position::First as u8 => Ok(Position::First),
-            x if x == Position::Last as u8 => Ok(Position::Last),
-            x if x == Position::Middle as u8 => Ok(Position::Middle),
-            _ => Err(()),
-        }
-    }
-}
-
-/// A generic payload that can be backed by different databus implementations
-pub struct Payload<'a, T: Databus<'a>> {
-    /// Mutable reference to the data buffer
-    pub data: &'a mut [u8],
-    /// Metadata about this payload
+/// A RAII guard representing a readable buffer acquired from a `Consumer`.
+///
+/// When this guard is dropped, the buffer is automatically released back to the `Consumer`.
+/// This payload provides immutable access to the data.
+pub struct ReadPayload<'a, C: Consumer<'a>> {
+    data: &'a [u8],
     pub metadata: Metadata,
-    pub is_write: bool,
-    pub databus: &'a T,
+    consumer: &'a C,
 }
 
-impl<'a, T: Databus<'a>> Payload<'a, T> {
-    /// Creates a new payload with the given data, metadata, and completion callback
-    pub fn new(
-        data: &'a mut [u8],
-        metadata: Metadata,
-        is_write: bool,
-        databus: &'a T,
-    ) -> Self {
+impl<'a, C: Consumer<'a>> ReadPayload<'a, C> {
+    pub fn new(data: &'a [u8], metadata: Metadata, consumer: &'a C) -> Self {
+        Self { data, metadata, consumer }
+    }
+}
+
+impl_deref_to_data_with_valid_length!(ReadPayload, <'a, C: Consumer<'a>>);
+
+impl<'a, C: Consumer<'a>> Drop for ReadPayload<'a, C> {
+    fn drop(&mut self) {
+        self.consumer.release_read(self.metadata.valid_length);
+    }
+}
+
+// --- Write Payload ---
+
+/// A RAII guard representing a writable buffer acquired from a `Producer`.
+///
+/// When this guard is dropped, the written data and its metadata are "committed"
+/// back to the `Producer`.
+pub struct WritePayload<'a, P: Producer<'a>> {
+    data: &'a mut [u8],
+    metadata: Metadata, // Kept private to enforce setter usage.
+    producer: &'a P,
+}
+
+impl<'a, P: Producer<'a>> WritePayload<'a, P> {
+    pub fn new(data: &'a mut [u8], producer: &'a P) -> Self {
         Self {
             data,
-            metadata,
-            is_write,
-            databus,
+            metadata: Metadata::default(),
+            producer,
         }
     }
 
-    /// Updates the valid length in the metadata
+    /// Sets the length of the valid data written to the payload.
     pub fn set_valid_length(&mut self, length: usize) {
         self.metadata.valid_length = length.min(self.data.len());
     }
 
-    /// Updates the position in the metadata
+    /// Sets the position of this payload within a sequence.
     pub fn set_position(&mut self, position: Position) {
         self.metadata.position = position;
     }
 }
 
-impl<'a, T: Databus<'a>> core::ops::Deref for Payload<'a, T> {
-    type Target = [u8];
-    
-    fn deref(&self) -> &Self::Target {
-        self.data
-    }
-}
+impl_deref_to_full_data!(WritePayload, <'a, P: Producer<'a>>);
+impl_deref_mut_to_full_data!(WritePayload, <'a, P: Producer<'a>>);
 
-impl<'a, T: Databus<'a>> core::ops::DerefMut for Payload<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.data
-    }
-}
-
-impl<'a, T: Databus<'a>> Drop for Payload<'a, T> {
+impl<'a, P: Producer<'a>> Drop for WritePayload<'a, P> {
     fn drop(&mut self) {
-        // Return the buffer to the slot.
+        // Replace the buffer with a dummy slice to transfer ownership back.
         let dummy_slice = &mut [];
         let buffer = core::mem::replace(&mut self.data, dummy_slice);
+        self.producer.release_write(buffer, self.metadata);
+    }
+}
 
-        // Execute the completion callback when the payload is dropped
-        self.databus.release(buffer, self.metadata, self.is_write);
+// --- Transform Payload ---
+
+/// A RAII guard representing a readable and writable buffer for in-place operations.
+///
+/// Acquired from a `Transformer`. When this guard is dropped, the transformation is
+/// considered complete, making the buffer available for the next consumer or transformer.
+pub struct TransformPayload<'a, T: Transformer<'a>> {
+    data: &'a mut [u8],
+    /// Metadata from the previous stage, which can be read by the transformer.
+    pub metadata: Metadata,
+    transformer: &'a T,
+}
+
+impl<'a, T: Transformer<'a>> TransformPayload<'a, T> {
+    pub fn new(data: &'a mut [u8], metadata: Metadata, transformer: &'a T) -> Self {
+        Self { data, metadata, transformer }
+    }
+
+    /// Allows the transformer to update the valid length if the transformation
+    /// changes the amount of data (e.g., compression).
+    pub fn set_valid_length(&mut self, length: usize) {
+        self.metadata.valid_length = length.min(self.data.len());
+    }
+}
+
+impl_deref_to_data_with_valid_length!(TransformPayload, <'a, T: Transformer<'a>>);
+impl_deref_mut_to_full_data!(TransformPayload, <'a, T: Transformer<'a>>);
+
+impl<'a, T: Transformer<'a>> Drop for TransformPayload<'a, T> {
+    fn drop(&mut self) {
+        let dummy_slice = &mut [];
+        let buffer = core::mem::replace(&mut self.data, dummy_slice);
+        self.transformer.release_transform(buffer, self.metadata);
     }
 }
