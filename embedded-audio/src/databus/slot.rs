@@ -96,6 +96,10 @@ impl<'b> Slot<'b> {
             has_transformer,
         }
     }
+
+    pub fn get_current_metadata(&self) -> Option<Metadata> {
+        unsafe { (*self.payload_metadata.get()).clone() }
+    }
 }
 
 impl<'b> Producer<'b> for Slot<'b> {

@@ -1,16 +1,15 @@
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::SizedSample;
-use embedded_io::{Read, Seek, Write};
 use async_ringbuf::traits::{AsyncProducer, Consumer, Observer, Producer, Split};
 use async_ringbuf::{AsyncHeapRb, AsyncHeapProd};
 
-use embedded_audio_driver::databus::Databus;
 use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
-use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
+use embedded_audio_driver::port::{InPort, OutPort, PortRequirement, InPlacePort};
 use embedded_audio_driver::stream::{Stream, StreamState};
 use embedded_audio_driver::Error;
-use embedded_audio_driver::payload::Position;
+use embedded_audio_driver::payload::{Position, ReadPayload};
+use embedded_audio_driver::databus::{Consumer as DatabusConsumer, Producer as DatabusProducer, Transformer};
 
 
 use crate::utils::FromBytes;
@@ -166,13 +165,13 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
     }
 
     /// This is a sink, so it has no output port requirement.
-    fn get_out_port_requriement(&self) -> PortRequirement {
+    fn get_out_port_requirement(&self) -> PortRequirement {
         PortRequirement::None
     }
 
     /// This stream requires a payload as input.
-    fn get_in_port_requriement(&self) -> PortRequirement {
-        PortRequirement::Payload(0) // Any payload size is acceptable.
+    fn get_in_port_requirement(&self) -> PortRequirement {
+        PortRequirement::Payload { min_size: 0 } // Any payload size is acceptable.
     }
 
     /// Returns the number of bytes that can be written to the internal buffer.
@@ -183,26 +182,29 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
 
     /// Processes an input payload, pushing its data into the ring buffer for playback.
     /// This async method will now wait (yield) if the ring buffer is full.
-    async fn process<'a, R, W, DI, DO>(
+    async fn process<'a, R, W, C, P, TF>(
         &mut self,
-        in_port: &mut InPort<'a, R, DI>,
-        _out_port: &mut OutPort<'a, W, DO>,
+        in_port: &mut InPort<'a, R, C>,
+        _out_port: &mut OutPort<'a, W, P>,
+        _inplace_port: &mut InPlacePort<'a, TF>,
     ) -> ProcessResult<Self::Error>
     where
-        R: Read + Seek,
-        W: Write + Seek,
-        DI: Databus<'a>,
-        DO: Databus<'a>,
+        R: embedded_io::Read + embedded_io::Seek,
+        W: embedded_io::Write + embedded_io::Seek,
+        C: DatabusConsumer<'a>,
+        P: DatabusProducer<'a>,
+        TF: Transformer<'a>,
     {
         if self.state != StreamState::Running {
             return Err(Error::NotInitialized);
         }
-        if let InPort::Payload(databus) = in_port {
-            let payload = databus.acquire_read().await;
+
+        if let InPort::Consumer(databus) = in_port {
+            let payload: ReadPayload<'a, C> = databus.acquire_read().await;
             let sample_size = std::mem::size_of::<T>();
 
             // Create an iterator over the samples in the valid part of the payload.
-            let samples = payload.data[..payload.metadata.valid_length as usize]
+            let samples = payload
                 .chunks_exact(sample_size)
                 .map(|chunk| T::from_le_bytes(chunk.try_into().unwrap()));
             

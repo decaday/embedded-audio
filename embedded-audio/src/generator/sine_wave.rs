@@ -1,11 +1,11 @@
 use core::f32::consts::PI;
 use embedded_io::{Read, Seek, Write};
 
-use embedded_audio_driver::databus::Databus;
+use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
-use embedded_audio_driver::payload::{Payload, Position};
-use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
+use embedded_audio_driver::payload::Position;
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirement};
 use embedded_audio_driver::Error;
 
 /// A generator that produces a sine wave.
@@ -90,13 +90,13 @@ impl Element for SineWaveGenerator {
     }
 
     /// Input is not used.
-    fn get_in_port_requriement(&self) -> PortRequirement {
+    fn get_in_port_requirement(&self) -> PortRequirement {
         PortRequirement::None
     }
 
     /// Requires a payload for output.
-    fn get_out_port_requriement(&self) -> PortRequirement {
-        PortRequirement::Payload(self.calculate_min_payload_size())
+    fn get_out_port_requirement(&self) -> PortRequirement {
+        PortRequirement::Payload { min_size: self.calculate_min_payload_size() }
     }
 
     /// The generated stream is virtually infinite.
@@ -105,20 +105,22 @@ impl Element for SineWaveGenerator {
     }
 
     /// The main processing function to generate sine wave data.
-    async fn process<'a, R, W, DI, DO>(
+    async fn process<'a, R, W, C, P, T>(
         &mut self,
-        _in_port: &mut InPort<'a, R, DI>,
-        out_port: &mut OutPort<'a, W, DO>,
+        _in_port: &mut InPort<'a, R, C>,
+        out_port: &mut OutPort<'a, W, P>,
+        _inplace_port: &mut InPlacePort<'a, T>,
     ) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
-        DI: Databus<'a>,
-        DO: Databus<'a>,
+        C: Consumer<'a>,
+        P: Producer<'a>,
+        T: Transformer<'a>,
     {
         // This element only supports producing data into a payload.
-        if let OutPort::Payload(databus) = out_port {
-            let mut payload: Payload<DO> = databus.acquire_write().await;
+        if let OutPort::Producer(producer) = out_port {
+            let mut payload = producer.acquire_write().await;
 
             let bytes_per_sample = (self.info.bits_per_sample / 8) as usize;
             let bytes_per_frame = bytes_per_sample * self.info.channels as usize;
@@ -191,7 +193,7 @@ mod tests {
     use crate::databus::slot::Slot;
     use embedded_audio_driver::{
         payload::Position,
-        port::{Dmy, InPort, OutPort},
+        port::{InPlacePort, InPort},
     };
 
     #[tokio::test]
@@ -202,25 +204,26 @@ mod tests {
         // 1. Setup the generator and ports
         let mut generator = SineWaveGenerator::new(44100, 2, 16, 440.0, 0.5);
         let mut buffer = vec![0u8; 1024]; // A buffer for the output payload
-        let slot = Slot::new(Some(&mut buffer));
+        let slot = Slot::new(Some(&mut buffer), false);
 
-        let mut in_port: InPort<Dmy, Dmy> = InPort::None;
-        let mut out_port: OutPort<Dmy, _> = OutPort::Payload(&slot);
+        let mut in_port = InPort::new_none();
+        let mut out_port = slot.out_port();
+        let mut inplace_port = InPlacePort::new_none();
 
         // 2. First process call
         assert_eq!(generator.current_sample, 0, "Initial sample count should be 0");
         assert!(generator.is_first_chunk, "Should be the first chunk initially");
 
         generator
-            .process(&mut in_port, &mut out_port)
+            .process(&mut in_port, &mut out_port, &mut inplace_port)
             .await
             .expect("First process call should succeed");
 
         // 3. Verify state after first process
         // The payload is dropped, returning the buffer and metadata to the slot.
-        let metadata = slot
-            .get_current_metadata()
-            .expect("Metadata should be available after processing");
+        // We acquire the slot for reading to inspect the metadata.
+        let read_payload = slot.acquire_read().await;
+        let metadata = read_payload.metadata;
 
         assert_eq!(
             metadata.valid_length, 1024,
@@ -239,18 +242,17 @@ mod tests {
         assert!(!generator.is_first_chunk, "is_first_chunk should now be false");
 
         // Release the read payload to make the slot available for writing again.
-        drop(slot.acquire_read().await);
+        drop(read_payload);
 
         // 4. Second process call
         generator
-            .process(&mut in_port, &mut out_port)
+            .process(&mut in_port, &mut out_port, &mut inplace_port)
             .await
             .expect("Second process call should succeed");
         
         // 5. Verify state after second process
-        let metadata_after_second_read = slot
-            .get_current_metadata()
-            .expect("Metadata should be available after second processing");
+        let read_payload_2 = slot.acquire_read().await;
+        let metadata_after_second_read = read_payload_2.metadata;
 
         assert_eq!(
             metadata_after_second_read.valid_length, 1024,
@@ -276,7 +278,7 @@ mod tests {
 
         // Input checks
         assert_eq!(
-            generator.get_in_port_requriement(),
+            generator.get_in_port_requirement(),
             PortRequirement::None
         );
         assert!(generator.get_in_info().is_none());
@@ -291,8 +293,8 @@ mod tests {
         // Port requirement check
         let min_payload_size = (24 / 8) * 1 * 256;
         assert_eq!(
-            generator.get_out_port_requriement(),
-            PortRequirement::Payload(min_payload_size)
+            generator.get_out_port_requirement(),
+            PortRequirement::Payload { min_size: min_payload_size }
         );
         
         // Available frames check

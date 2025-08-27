@@ -6,7 +6,8 @@ use embedded_audio::databus::slot::Slot;
 use embedded_audio::decoder::WavDecoder;
 use embedded_audio::stream::cpal_output::{Config, CpalOutputStream};
 use embedded_audio_driver::element::Element;
-use embedded_audio_driver::port::{Dmy, InPort, OutPort};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort};
+use embedded_audio_driver::databus::{Producer, Consumer};
 use embedded_audio_driver::stream::Stream;
 use embedded_audio_driver::element::ProcessStatus::{Eof, Fine};
 
@@ -53,23 +54,24 @@ async fn playback_wav() {
 
     // 4. Create the databus to connect the elements.
     let mut buffer = vec![0u8; 512];
-    let slot = Slot::new(Some(&mut buffer));
+    let slot = Slot::new(Some(&mut buffer), false);
     // Define the input and output ports for this iteration.
-    let mut dec_in_port: InPort<_, Dmy> = InPort::Reader(&mut cursor);
-    let mut dec_out_port: OutPort<Dmy, _> = OutPort::Payload(&slot);
+    let mut dec_in_port = InPort::new_reader(&mut cursor);
+    let mut dec_out_port = slot.out_port();
     
-    let mut stream_in_port: InPort<Dmy, _> = InPort::Payload(&slot);
-    let mut stream_out_port: OutPort<Dmy, Dmy> = OutPort::None;
+    let mut stream_in_port = slot.in_port();
+    let mut stream_out_port = OutPort::new_none();
+    let mut inplace_port = InPlacePort::new_none();
 
     // 5. Run the processing loop.
     // This loop will continue until the decoder reaches the end of the file.
     info!("Starting playback loop...");
     loop {
         // Process the decoder to fill the slot with audio data.
-        decoder.process(&mut dec_in_port, &mut dec_out_port).await.unwrap();
+        decoder.process(&mut dec_in_port, &mut dec_out_port, &mut inplace_port).await.unwrap();
 
         // Process the CPAL stream to consume the data from the slot.
-        match cpal_stream.process(&mut stream_in_port, &mut stream_out_port).await.unwrap() {
+        match cpal_stream.process(&mut stream_in_port, &mut stream_out_port, &mut inplace_port).await.unwrap() {
             Eof => {
                 info!("Reached end of WAV file.");
                 break;

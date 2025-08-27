@@ -1,14 +1,14 @@
 use embedded_io::{Read, Seek, SeekFrom, Write};
 
-use embedded_audio_driver::databus::Databus;
+use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirement};
 use embedded_audio_driver::Error;
 
-/// WAV encoder that implements the Element trait
-/// Uses Payload for input and IO for output (needs seeking for header updates)
+/// WAV encoder that implements the Element trait.
+/// Uses a Consumer for input and IO for output (needs seeking for header updates).
 pub struct WavEncoder {
     info: Option<Info>,
     encoded_samples: u64,
@@ -18,7 +18,7 @@ pub struct WavEncoder {
 }
 
 impl WavEncoder {
-    /// Create a new WAV encoder
+    /// Create a new WAV encoder.
     pub fn new() -> Self {
         Self {
             info: None,
@@ -29,7 +29,7 @@ impl WavEncoder {
         }
     }
 
-    /// Set the audio format information
+    /// Set the audio format information.
     pub fn set_info(&mut self, info: Info) -> Result<(), Error> {
         if info.channels == 0 || info.bits_per_sample == 0 || info.sample_rate == 0 {
             return Err(Error::InvalidParameter);
@@ -40,7 +40,7 @@ impl WavEncoder {
         Ok(())
     }
 
-    /// Write WAV header to output writer
+    /// Write WAV header to output writer.
     fn write_header<W: Write + Seek>(&mut self, writer: &mut W) -> Result<(), Error> {
         // ... (rest of the function is unchanged)
         let info = self.info.ok_or(Error::InvalidParameter)?;
@@ -79,7 +79,7 @@ impl WavEncoder {
         Ok(())
     }
 
-    /// Update the data size in the header
+    /// Update the data size in the header.
     fn update_header_sizes<W: Write + Seek>(&mut self, writer: &mut W) -> Result<(), Error> {
         let data_size = self.encoded_samples * self.bytes_per_frame as u64;
         let file_size = 36 + data_size; // RIFF chunk size = file size - 8, so file size = 44 - 8 + data_size = 36 + data_size
@@ -98,7 +98,7 @@ impl WavEncoder {
         Ok(())
     }
 
-    /// Calculate minimum payload size based on audio format
+    /// Calculate minimum payload size based on audio format.
     fn calculate_min_payload_size(&self) -> u32 {
         if let Some(info) = &self.info {
             let frame_size = (info.bits_per_sample as u32 / 8) * info.channels as u32;
@@ -106,12 +106,12 @@ impl WavEncoder {
             let min_frames = 256; // Minimum 256 frames for efficient processing
             frame_size * min_frames
         } else {
-            // Default minimum size when info not available yet
-            2048
+            // TODO: Default minimum size when info not available yet
+            16
         }
     }
 
-    /// Finalize the WAV file by updating header sizes
+    /// Finalize the WAV file by updating header sizes.
     pub fn finalize<W: Write + Seek>(&mut self, writer: &mut W) -> Result<(), Error> {
         if self.header_written {
             self.update_header_sizes(writer)?;
@@ -132,11 +132,11 @@ impl Element for WavEncoder {
         None
     }
 
-    fn get_in_port_requriement(&self) -> PortRequirement {
-        PortRequirement::Payload(self.calculate_min_payload_size())
+    fn get_in_port_requirement(&self) -> PortRequirement {
+        PortRequirement::Payload { min_size: self.calculate_min_payload_size() }
     }
 
-    fn get_out_port_requriement(&self) -> PortRequirement {
+    fn get_out_port_requirement(&self) -> PortRequirement {
         PortRequirement::IO
     }
 
@@ -144,15 +144,21 @@ impl Element for WavEncoder {
         u32::MAX
     }
 
-    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> ProcessResult<Self::Error>
+    async fn process<'a, R, W, C, P, T>(
+        &mut self,
+        in_port: &mut InPort<'a, R, C>,
+        out_port: &mut OutPort<'a, W, P>,
+        _inplace_port: &mut InPlacePort<'a, T>,
+    ) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
-        DI: Databus<'a>,
-        DO: Databus<'a>,
+        C: Consumer<'a>,
+        P: Producer<'a>,
+        T: Transformer<'a>,
     {
         match (in_port, out_port) {
-            (InPort::Payload(databus), OutPort::Writer(writer)) => {
+            (InPort::Consumer(databus), OutPort::Writer(writer)) => {
                 if !self.header_written {
                     self.write_header(writer)?;
                 }
@@ -160,7 +166,7 @@ impl Element for WavEncoder {
                 let payload = databus.acquire_read().await;
 
                 if payload.metadata.valid_length != 0 {
-                    let data_to_write = &payload.data[..payload.metadata.valid_length];
+                    let data_to_write = &payload[..];
 
                     let aligned_len = if self.bytes_per_frame > 0 {
                         (data_to_write.len() as u32 / self.bytes_per_frame) * self.bytes_per_frame
@@ -193,7 +199,7 @@ impl Element for WavEncoder {
 mod tests {
     use embedded_io::{ErrorType, Seek, SeekFrom, Write};
     
-    use embedded_audio_driver::port::Dmy;
+    use embedded_audio_driver::port::InPlacePort;
     use crate::databus::slot::Slot;
     use super::*;
     
@@ -279,7 +285,7 @@ mod tests {
         encoder.set_info(Info { sample_rate: 44100, channels: 1, bits_per_sample: 16, num_frames: None }).unwrap();
 
         let mut in_buffer = vec![0u8; 4];
-        let slot = Slot::new(Some(&mut in_buffer));
+        let slot = Slot::new(Some(&mut in_buffer), false);
         
         // A producer task fills the slot for the encoder to consume.
         {
@@ -289,9 +295,10 @@ mod tests {
             p.set_position(Position::First); // Not the last packet
         } // p is dropped, slot becomes Full
 
-        let mut in_port: InPort<Dmy, _> = InPort::Payload(&slot);
-        let mut out_port: OutPort<_, Dmy> = OutPort::Writer(&mut writer);
-        encoder.process(&mut in_port, &mut out_port).await.unwrap();
+        let mut in_port = slot.in_port();
+        let mut out_port = OutPort::new_writer(&mut writer);
+        let mut inplace_port = InPlacePort::new_none();
+        encoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
 
         assert!(encoder.header_written);
         assert_eq!(encoder.encoded_samples, 2);
@@ -312,7 +319,7 @@ mod tests {
         encoder.set_info(Info { sample_rate: 8000, channels: 2, bits_per_sample: 16, num_frames: None }).unwrap();
 
         let mut in_buffer = vec![0u8; 1024];
-        let slot = Slot::new(Some(&mut in_buffer));
+        let slot = Slot::new(Some(&mut in_buffer), false);
 
         // Producer fills the slot and marks the payload as the last one.
         {
@@ -322,9 +329,10 @@ mod tests {
             p.set_position(Position::Last); // The last packet
         } // p is dropped, slot becomes Full
 
-        let mut in_port: InPort<Dmy, _> = InPort::Payload(&slot);
-        let mut out_port: OutPort<_, Dmy> = OutPort::Writer(&mut writer);
-        encoder.process(&mut in_port, &mut out_port).await.unwrap();
+        let mut in_port = slot.in_port();
+        let mut out_port = OutPort::new_writer(&mut writer);
+        let mut inplace_port = InPlacePort::new_none();
+        encoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
 
         assert_eq!(encoder.encoded_samples, 256);
 

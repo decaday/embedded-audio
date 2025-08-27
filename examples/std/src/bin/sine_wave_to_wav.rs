@@ -8,8 +8,9 @@ use embedded_audio::databus::slot::Slot;
 use embedded_audio::encoder::WavEncoder;
 use embedded_audio::generator::SineWaveGenerator;
 use embedded_audio_driver::element::Element;
+use embedded_audio_driver::databus::{Producer, Consumer};
 use embedded_audio_driver::element::ProcessStatus::{Eof, Fine};
-use embedded_audio_driver::port::{Dmy, InPort, OutPort};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort};
 
 // The main task for generating the WAV file.
 // It sets up the pipeline and runs the processing loop.
@@ -50,22 +51,26 @@ async fn generate_wav() {
     // 3. Create the databus to connect the elements.
     // The buffer size determines how much data is processed in each step.
     let mut buffer = vec![0u8; 4096];
-    let slot = Slot::new(Some(&mut buffer));
-    let mut gen_in_port: InPort<Dmy, Dmy> = InPort::None;
-    let mut gen_out_port:OutPort<Dmy, _>  = OutPort::Payload(&slot);
-    
-    let mut enc_in_port: InPort<Dmy, _> = InPort::Payload(&slot);
-    let mut enc_out_port: OutPort<_, Dmy> = OutPort::Writer(&mut file_writer);
+    let slot = Slot::new(Some(&mut buffer), false);
+    // 4. Set up the ports for the processing loop.
+    // The generator has no input and outputs to the slot.
+    let mut gen_in_port = InPort::new_none();
+    let mut gen_out_port = slot.out_port();
 
+    // The encoder takes input from the slot and outputs to the file writer.
+    let mut enc_in_port = slot.in_port();
+    let mut enc_out_port = OutPort::new_writer(&mut file_writer);
+    let mut inplace_port = InPlacePort::new_none();
+
+    // The main processing loop.
+    // It runs until the generator signals the end of the audio stream.
+    info!("Starting processing loop...");
     loop {
-        // Define the input and output ports for the elements for this iteration.
-
         // Process the generator to fill the slot with audio data.
-        generator.process(&mut gen_in_port, &mut gen_out_port).await.unwrap();
+        generator.process(&mut gen_in_port, &mut gen_out_port, &mut inplace_port).await.unwrap();
 
         // Process the encoder to write the data from the slot to the file.
-
-        match encoder.process(&mut enc_in_port, &mut enc_out_port).await.unwrap() {
+        match encoder.process(&mut enc_in_port, &mut enc_out_port, &mut inplace_port).await.unwrap() {
             Eof => {
                 info!("Reached end of audio generation.");
                 break;

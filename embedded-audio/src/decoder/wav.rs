@@ -1,14 +1,14 @@
 use embedded_io::{Read, Seek, SeekFrom, Write};
 
-use embedded_audio_driver::databus::Databus;
+use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPort, OutPort, PortRequirement};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirement};
 use embedded_audio_driver::Error;
 
-/// WAV decoder that implements the Element trait
-/// Always uses IO for input (needs seeking for header parsing) and Payload for output
+/// WAV decoder that implements the Element trait.
+/// Always uses IO for input (needs seeking for header parsing) and a Producer for output.
 pub struct WavDecoder {
     info: Option<Info>,
     data_start: u64,
@@ -19,7 +19,7 @@ pub struct WavDecoder {
 }
 
 impl WavDecoder {
-    /// Create a new WAV decoder
+    /// Create a new WAV decoder.
     pub fn new() -> Self {
         Self {
             info: None,
@@ -31,7 +31,7 @@ impl WavDecoder {
         }
     }
 
-    /// Parse WAV header from input reader
+    /// Parse WAV header from input reader.
     fn parse_header<R: Read + Seek>(&mut self, reader: &mut R) -> Result<(), Error> {
         // ... (rest of the function is unchanged)
         let mut header_buf = [0u8; 44];
@@ -106,7 +106,7 @@ impl WavDecoder {
         Ok(())
     }
 
-    /// Calculate minimum payload size based on audio format
+    /// Calculate minimum payload size based on audio format.
     fn calculate_min_payload_size(&self) -> u32 {
         if let Some(info) = &self.info {
             let frame_size = (info.bits_per_sample as u32 / 8) * info.channels as u32;
@@ -131,12 +131,12 @@ impl Element for WavDecoder {
         self.info
     }
 
-    fn get_in_port_requriement(&self) -> PortRequirement {
+    fn get_in_port_requirement(&self) -> PortRequirement {
         PortRequirement::IO
     }
 
-    fn get_out_port_requriement(&self) -> PortRequirement {
-        PortRequirement::Payload(self.calculate_min_payload_size())
+    fn get_out_port_requirement(&self) -> PortRequirement {
+        PortRequirement::Payload { min_size: self.calculate_min_payload_size() }
     }
 
     fn available(&self) -> u32 {
@@ -157,15 +157,21 @@ impl Element for WavDecoder {
         }
     }
 
-    async fn process<'a, R, W, DI, DO>(&mut self, in_port: &mut InPort<'a, R, DI>, out_port: &mut OutPort<'a, W, DO>) -> ProcessResult<Self::Error>
+    async fn process<'a, R, W, C, P, T>(
+        &mut self,
+        in_port: &mut InPort<'a, R, C>,
+        out_port: &mut OutPort<'a, W, P>,
+        _inplace_port: &mut InPlacePort<'a, T>,
+    ) -> ProcessResult<Self::Error>
     where
         R: Read + Seek,
         W: Write + Seek,
-        DI: Databus<'a>,
-        DO: Databus<'a>,
+        C: Consumer<'a>,
+        P: Producer<'a>,
+        T: Transformer<'a>,
     {
         match (in_port, out_port) {
-            (InPort::Reader(reader), OutPort::Payload(databus)) => {
+            (InPort::Reader(reader), OutPort::Producer(producer)) => {
                 if !self.header_parsed {
                     self.parse_header(reader)?;
                 }
@@ -173,7 +179,7 @@ impl Element for WavDecoder {
                 let read_pos = self.data_start + self.current_position;
                 reader.seek(SeekFrom::Start(read_pos)).map_err(|_| Error::DeviceError)?;
 
-                let mut payload = databus.acquire_write().await;
+                let mut payload = producer.acquire_write().await;
                 let max_read = payload.len();
                 
                 let aligned_read = if self.bytes_per_frame > 0 {
@@ -234,8 +240,7 @@ mod tests {
     use embedded_io_adapters::std::FromStd;
     use embedded_io::ErrorType;
 
-    use embedded_audio_driver::port::Dmy;
-    use crate::databus::slot::Slot;
+    use crate::databus::slot::Slot; 
     use super::*;
     
     // --- Real File Data Tests ---
@@ -263,30 +268,30 @@ mod tests {
 
         let mut reader = FromStd::new(Cursor::new(REAL_WAV_FILE));
         let mut decoder = WavDecoder::new();
-        decoder.parse_header(&mut reader).expect("Header parsing failed");
-
-        let data_start_offset = decoder.data_start;
-        assert!(data_start_offset > 0, "Data start offset should be greater than 0");
-
+        
         let mut buffer = vec![0u8; 1024];
-        let slot = Slot::new(Some(&mut buffer));
+        let slot = Slot::new(Some(&mut buffer), false);
 
-        let mut in_port: InPort<_, Dmy> = InPort::Reader(&mut reader);
-        let mut out_port: OutPort<Dmy, _> = OutPort::Payload(&slot);
+        let mut in_port = InPort::new_reader(&mut reader);
+        let mut out_port = slot.out_port();
+        let mut inplace_port = InPlacePort::new_none();
 
         // First process call
         let initial_position = decoder.current_position;
-        decoder.process(&mut in_port, &mut out_port).await.unwrap();
+        decoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
         
+        assert!(decoder.header_parsed, "Header should be parsed after the first process call");
         assert!(decoder.current_position > initial_position, "Current position should advance after first read");
         let position_after_first_read = decoder.current_position;
-
-        drop(slot.acquire_read().await);
+        
+        let payload_guard = slot.acquire_read().await;
+        drop(payload_guard);
             
         // Second process call
-        decoder.process(&mut in_port, &mut out_port).await.unwrap();
+        decoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
         assert!(decoder.current_position > position_after_first_read, "Current position should advance after second read");
 
+        // The metadata is now part of the payload itself, but we can check the slot's internal state.
         let final_metadata = slot.get_current_metadata().expect("Metadata should be available after processing");
         
         // The decoder should have set the valid length to the number of bytes read.

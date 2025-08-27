@@ -16,6 +16,18 @@ pub enum InPort<'a, R: Read + Seek, C: Consumer<'a>> {
     None,
 }
 
+impl<'a, R: Read + Seek> InPort<'a, R, Dmy> {
+    pub fn new_reader(reader: &'a mut R) -> Self {
+        InPort::Reader(reader)
+    }
+}
+
+impl InPort<'_, Dmy, Dmy> {
+    pub fn new_none() -> Self {
+        InPort::None
+    }
+}
+
 /// Represents an output port for an `Element`.
 ///
 /// An `Element` can send data either to a standard `Write + Seek` sink
@@ -29,6 +41,18 @@ pub enum OutPort<'a, W: Write + Seek, P: Producer<'a>> {
     None,
 }
 
+impl<'a, W: Write + Seek> OutPort<'a, W, Dmy> {
+    pub fn new_writer(writer: &'a mut W) -> Self {
+        OutPort::Writer(writer)
+    }
+}
+
+impl OutPort<'_, Dmy, Dmy> {
+    pub fn new_none() -> Self {
+        OutPort::None
+    }
+}
+
 /// Represents an in-place transformation port for an `Element`.
 ///
 /// An `Element` can perform in-place transformations using a `Transformer`.
@@ -38,6 +62,12 @@ pub enum InPlacePort<'a, T: Transformer<'a>> {
     Transformer(&'a T),
     /// Represents no in-place transformation, typically for elements that do not modify data in place.
     None,
+}
+
+impl InPlacePort<'_, Dmy> {
+    pub fn new_none() -> Self {
+        InPlacePort::None
+    }
 }
 
 /// Describes the data transfer requirements for an `Element`'s port.

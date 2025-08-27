@@ -1,6 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-macro_rules! impl_deref_to_data_with_valid_length {
+macro_rules! impl_deref_valid_length {
     ($struct_name:ident, <'a, $g:ident: $trait:path>) => {
         impl<'a, $g: $trait> Deref for $struct_name<'a, $g> {
             type Target = [u8];
@@ -12,7 +12,7 @@ macro_rules! impl_deref_to_data_with_valid_length {
     };
 }
 
-macro_rules! impl_deref_to_full_data {
+macro_rules! impl_deref_full_data {
     ($struct_name:ident, <'a, $g:ident: $trait:path>) => {
         impl<'a, $g: $trait> Deref for $struct_name<'a, $g> {
             type Target = [u8];
@@ -23,7 +23,7 @@ macro_rules! impl_deref_to_full_data {
     };
 }
 
-macro_rules! impl_deref_mut_to_full_data {
+macro_rules! impl_deref_mut_full_data {
     ($struct_name:ident, <'a, $g:ident: $trait:path>) => {
         impl<'a, $g: $trait> DerefMut for $struct_name<'a, $g> {
             fn deref_mut(&mut self) -> &mut <Self as Deref>::Target {
@@ -86,7 +86,7 @@ impl<'a, C: Consumer<'a>> ReadPayload<'a, C> {
     }
 }
 
-impl_deref_to_data_with_valid_length!(ReadPayload, <'a, C: Consumer<'a>>);
+impl_deref_valid_length!(ReadPayload, <'a, C: Consumer<'a>>);
 
 impl<'a, C: Consumer<'a>> Drop for ReadPayload<'a, C> {
     fn drop(&mut self) {
@@ -126,8 +126,8 @@ impl<'a, P: Producer<'a>> WritePayload<'a, P> {
     }
 }
 
-impl_deref_to_full_data!(WritePayload, <'a, P: Producer<'a>>);
-impl_deref_mut_to_full_data!(WritePayload, <'a, P: Producer<'a>>);
+impl_deref_full_data!(WritePayload, <'a, P: Producer<'a>>);
+impl_deref_mut_full_data!(WritePayload, <'a, P: Producer<'a>>);
 
 impl<'a, P: Producer<'a>> Drop for WritePayload<'a, P> {
     fn drop(&mut self) {
@@ -163,8 +163,8 @@ impl<'a, T: Transformer<'a>> TransformPayload<'a, T> {
     }
 }
 
-impl_deref_to_data_with_valid_length!(TransformPayload, <'a, T: Transformer<'a>>);
-impl_deref_mut_to_full_data!(TransformPayload, <'a, T: Transformer<'a>>);
+impl_deref_valid_length!(TransformPayload, <'a, T: Transformer<'a>>);
+impl_deref_mut_full_data!(TransformPayload, <'a, T: Transformer<'a>>);
 
 impl<'a, T: Transformer<'a>> Drop for TransformPayload<'a, T> {
     fn drop(&mut self) {

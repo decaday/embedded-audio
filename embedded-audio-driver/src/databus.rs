@@ -1,4 +1,5 @@
 use crate::payload::{Metadata, ReadPayload, TransformPayload, WritePayload};
+use crate::port::{Dmy, InPlacePort, InPort, OutPort};
 
 pub enum Operation {
     Read,
@@ -19,6 +20,15 @@ pub trait Consumer<'a>: Sized {
     /// This method is intended for internal use by the payload's RAII mechanism
     /// and should not be called directly by the user.
     fn release_read(&'a self, consumed_bytes: usize);
+
+    // fn is_transformer_configured(&self) -> bool {
+    //     false
+    // }
+
+    /// Helper to create an `InPort` for this `Consumer`.
+    fn in_port(&'a self) -> InPort<'a, Dmy, Self> {
+        InPort::Consumer(self)
+    }
 }
 
 /// A trait for components to which audio data can be written asynchronously.
@@ -34,6 +44,11 @@ pub trait Producer<'a>: Sized {
     /// This method is intended for internal use by the payload's RAII mechanism
     /// and should not be called directly by the user.
     fn release_write(&'a self, buf: &'a mut [u8], metadata: Metadata);
+
+    /// Helper to create an `OutPort` for this `Producer`.
+    fn out_port(&'a self) -> OutPort<'a, Dmy, Self> {
+        OutPort::Producer(self)
+    }
 }
 
 /// A trait for components that support in-place modification of a buffer.
@@ -50,4 +65,9 @@ pub trait Transformer<'a>: Sized {
     /// This method is intended for internal use by the payload's RAII mechanism
     /// and should not be called directly by the user.
     fn release_transform(&'a self, buf: &'a mut [u8], metadata: Metadata);
+
+    /// Helper to create an `InPlacePort` for this `Transformer`.
+    fn inplace_port(&'a self) -> InPlacePort<'a, Self> {
+        InPlacePort::Transformer(self)
+    }
 }
