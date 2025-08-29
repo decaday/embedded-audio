@@ -1,5 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 use embassy_executor::Spawner;
+use embedded_audio::transformer::Gain;
 use log::*;
 
 use embedded_audio::databus::slot::Slot;
@@ -7,7 +8,7 @@ use embedded_audio::decoder::WavDecoder;
 use embedded_audio::stream::cpal_output::{Config, CpalOutputStream};
 use embedded_audio_driver::element::Element;
 use embedded_audio_driver::port::{InPlacePort, InPort, OutPort};
-use embedded_audio_driver::databus::{Producer, Consumer};
+use embedded_audio_driver::databus::{Producer, Consumer, Transformer};
 use embedded_audio_driver::stream::Stream;
 use embedded_audio_driver::element::ProcessStatus::{Eof, Fine};
 
@@ -47,21 +48,24 @@ async fn playback_wav() {
     let wav_data = include_bytes!("../../../../res/light-rain.wav");
     let mut cursor = embedded_io_adapters::std::FromStd::new(std::io::Cursor::new(wav_data));
     let mut decoder = WavDecoder::new();
+    let mut gain = Gain::new(1.3);
 
     // 4. Create the databus to connect the elements.
     let mut buffer = vec![0u8; 512];
-    let slot = Slot::new(Some(&mut buffer), false);
+    let slot = Slot::new(Some(&mut buffer), true);
+    
     // Define the input and output ports for this iteration.
     let mut dec_in_port = InPort::new_reader(&mut cursor);
     let mut dec_out_port = slot.out_port();
-    
     let mut stream_in_port = slot.in_port();
+    let mut gain_inplace_port = slot.inplace_port();
     
     let mut empty_inplace_port = InPlacePort::new_none();
     let mut empty_in_port = InPort::new_none();
     let mut empty_out_port = OutPort::new_none();
     
     decoder.initialize(&mut dec_in_port, &mut empty_out_port, None).await.unwrap();
+    gain.initialize(&mut empty_in_port, &mut empty_out_port, decoder.get_out_info()).await.unwrap();
     cpal_stream.initialize(&mut empty_in_port, &mut empty_out_port, decoder.get_out_info()).await.unwrap();
     
     cpal_stream.start().expect("Failed to start CPAL stream");
@@ -70,6 +74,8 @@ async fn playback_wav() {
     loop {
         // Process the decoder to fill the slot with audio data.
         decoder.process(&mut dec_in_port, &mut dec_out_port, &mut empty_inplace_port).await.unwrap();
+
+        gain.process(&mut empty_in_port, &mut empty_out_port, &mut gain_inplace_port).await.unwrap();
 
         // Process the CPAL stream to consume the data from the slot.
         match cpal_stream.process(&mut stream_in_port, &mut empty_out_port, &mut empty_inplace_port).await.unwrap() {

@@ -5,11 +5,12 @@ pub mod decoder;
 pub mod databus;
 pub mod generator;
 pub mod stream;
-// pub mod pipeline;
+
 
 pub mod utils;
-// pub mod transformer;
+pub mod transformer;
 
+// pub mod pipeline;
 // use std::sync::Arc;
 // use embassy_time::{Duration, Timer};
 
@@ -22,8 +23,7 @@ cfg_if::cfg_if! {
     } else {
         pub type Mutex<T> = embassy_sync::blocking_mutex::CriticalSectionMutex<T>;
         
-        use embassy_sync::blocking_mutex::raw::CriticalSectionMutex as RawMutex;
-
+        pub use embassy_sync::blocking_mutex::raw::CriticalSectionMutex as RawMutex;
     }
 }
 
