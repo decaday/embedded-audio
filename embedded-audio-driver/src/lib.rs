@@ -4,7 +4,6 @@ pub mod stream;
 pub mod element;
 pub mod info;
 // pub mod transform;
-pub mod slot;
 pub mod port;
 pub mod databus;
 pub mod payload;

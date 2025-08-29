@@ -319,7 +319,8 @@ mod tests {
         // finalize the header if the payload is not marked as `Last`.
         let mut encoder = WavEncoder::new();
         let mut writer = MockWriter::new();
-        encoder.set_info(Info { sample_rate: 44100, channels: 1, bits_per_sample: 16, num_frames: None }).unwrap();
+        let info = Info { sample_rate: 44100, channels: 1, bits_per_sample: 16, num_frames: None };
+        encoder.set_info(info.clone()).unwrap();
 
         let mut in_buffer = vec![0u8; 4];
         let slot = Slot::new(Some(&mut in_buffer), false);
@@ -335,6 +336,8 @@ mod tests {
         let mut in_port = slot.in_port();
         let mut out_port = OutPort::new_writer(&mut writer);
         let mut inplace_port = InPlacePort::new_none();
+        encoder.initialize(&mut InPort::new_none(), &mut out_port, Some(info)).await.unwrap();
+
         encoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
 
         assert!(encoder.header_written);

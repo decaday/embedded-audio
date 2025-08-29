@@ -314,6 +314,7 @@ mod tests {
         let mut out_port = slot.out_port();
         let mut inplace_port = InPlacePort::new_none();
 
+        decoder.initialize(&mut in_port, &mut OutPort::new_none(), None).await.unwrap();
         // First process call
         let initial_position = decoder.current_position;
         decoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
