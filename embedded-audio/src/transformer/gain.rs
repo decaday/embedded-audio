@@ -11,12 +11,13 @@ use core::arch::aarch64::*;
 use core::arch::x86_64::*;
 use core::mem;
 
+use embedded_io::{Read, Seek, Write};
+
 use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{Element, Fine, ProcessResult};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::port::{Dmy, InPlacePort, InPort, OutPort, PortRequirements};
 use embedded_audio_driver::Error;
-use embedded_io::{Read, Seek, Write};
 
 // Fixed-point gain representation (Q16.16 format)
 type FixedGain = i32;

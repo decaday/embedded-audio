@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
 pub mod stream;
 // pub mod decoder;
 // pub mod encoder;

@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
 pub mod fmt;
 
 pub mod encoder;
@@ -23,7 +25,7 @@ cfg_if::cfg_if! {
     } else {
         pub type Mutex<T> = embassy_sync::blocking_mutex::CriticalSectionMutex<T>;
         
-        pub use embassy_sync::blocking_mutex::raw::CriticalSectionMutex as RawMutex;
+        pub use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as RawMutex;
     }
 }
 

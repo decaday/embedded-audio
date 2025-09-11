@@ -27,18 +27,19 @@ defmt = { version = "1", optional = true }
 log = { version = "0.4.27", default-features = false, optional = true }
 
 cpal = { version = "0.15.3", optional = true }
+libm = "0.2.15"
 
 [dev-dependencies]
-embedded-io-adapters = { version = "0.6", features = ["std"] }
+embedded-io-adapters = { version = "0.6" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "full"] }
-critical-section = { version = "1.2.0", features = ["std"] }
+critical-section = { version = "1.2.0" }
 
 
 [features]
 default = ["std"]
 defmt = ["dep:defmt", "embassy-sync/defmt"]
 log = ["dep:log", "embassy-sync/log"]
-# std = ["embassy-time/std"]
+
 std = [
     "alloc",
     "embedded-io/std", 
@@ -49,6 +50,10 @@ std = [
     "async-ringbuf/std",
     "dep:cpal",
     "log",
+
+    # dev-deps
+    "embedded-io-adapters/std",
+    "critical-section/std",
 ]
 
 alloc = ["ringbuf/alloc", "async-ringbuf/alloc"]

@@ -1,4 +1,5 @@
 use core::f32::consts::PI;
+use libm::sinf;
 use embedded_io::{Read, Seek, Write};
 
 use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
@@ -65,7 +66,7 @@ impl SineWaveGenerator {
     /// Generates a single sample value based on the current position.
     fn generate_sample(&self, sample_idx: u64) -> f32 {
         let t = sample_idx as f32 / self.info.sample_rate as f32;
-        self.amplitude * (2.0 * PI * self.frequency * t).sin()
+        self.amplitude * sinf(2.0 * PI * self.frequency * t)
     }
 
     /// Calculates the minimum required payload size for efficient processing.

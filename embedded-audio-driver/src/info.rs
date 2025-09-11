@@ -1,4 +1,4 @@
-use std::ops::{Div, Mul, Rem};
+use core::ops::{Div, Mul, Rem};
 
 /// Represents metadata information about an audio data stream or file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
