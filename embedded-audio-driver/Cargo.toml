@@ -12,10 +12,15 @@ readme = "README.md"
 license = "Apache-2.0"
 
 [dependencies]
-ringbuffer = "0.15.0"
+rivulets-driver = { version = "*", path = "../../rivulets/rivulets-driver" }
+
 embedded-io = "0.6"
 embassy-sync = { version = "0.7.0" }
 cfg-if = { version = "1.0.1", features = ["core"] }
+bitfield-struct = "0.11.0"
 
 [features]
-std = ["embedded-io/std"]
+std = [
+    "embedded-io/std",
+    "rivulets-driver/std",
+]

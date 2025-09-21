@@ -4,13 +4,13 @@ pub mod fmt;
 
 pub mod encoder;
 pub mod decoder;
-pub mod databus;
 pub mod generator;
 pub mod stream;
 
-
-pub mod utils;
 pub mod transformer;
+
+pub use rivulets::databus;
+pub use rivulets::utils;
 
 // pub mod pipeline;
 // use std::sync::Arc;

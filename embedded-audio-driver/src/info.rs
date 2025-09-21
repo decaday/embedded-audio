@@ -1,5 +1,7 @@
 use core::ops::{Div, Mul, Rem};
 
+use rivulets_driver::info::Info as BaseInfo;
+
 /// Represents metadata information about an audio data stream or file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Info {
@@ -87,5 +89,15 @@ impl Info {
     {
         let alignment = T::from(self.get_alignment_bytes());
         data % alignment == T::from(0)
+    }
+}
+
+impl BaseInfo for Info {
+    fn vaild(&self) -> bool {
+        self.vaild()
+    }
+
+    fn get_alignment_bytes(&self) -> u8 {
+        self.get_alignment_bytes()
     }
 }
