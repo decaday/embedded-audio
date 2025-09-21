@@ -9,7 +9,7 @@ use embedded_audio_driver::databus::{Consumer as DatabusConsumer, Producer as Da
 use embedded_audio_driver::element::{BaseElement, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPort, OutPort, InPlacePort, PortRequirements};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PayloadSize, PortRequirements};
 use embedded_audio_driver::stream::{BaseStream, StreamState};
 use embedded_audio_driver::Error;
 use crate::utils::FromBytes;
@@ -21,6 +21,8 @@ pub struct Config {
     pub rb_capacity: Option<usize>,
     /// The desired latency in milliseconds. This is used to calculate the minimum buffer size.
     pub latency_ms: usize,
+    /// Number of frames to process in each call to `process`.
+    pub frames_per_process: usize,
 }
 
 impl Default for Config {
@@ -28,6 +30,7 @@ impl Default for Config {
         Self {
             rb_capacity: None,
             latency_ms: 50,
+            frames_per_process: 64,
         }
     }
 }
@@ -126,10 +129,6 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         self.info
     }
 
-    fn get_port_requirements(&self) -> PortRequirements {
-        PortRequirements::sink(SIZE as u16)
-    }
-
     fn available(&self) -> u32 {
         if let Some(producer) = &self.rb_producer {
             (producer.vacant_len() * std::mem::size_of::<T>()) as u32
@@ -216,7 +215,10 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         self.stream = Some(stream);
         self.state = StreamState::Initialized;
 
-        Ok(self.get_port_requirements())
+        Ok(PortRequirements::sink(PayloadSize { 
+            min: SIZE as u16, 
+            preferred: SIZE as u16 * self.config.frames_per_process as u16,
+        }))
     }
 
     async fn process<'a, C, P, TF>(

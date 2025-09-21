@@ -6,7 +6,7 @@ use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{BaseElement, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPort, OutPort, InPlacePort, PortRequirements};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PayloadSize, PortRequirements};
 use embedded_audio_driver::Error;
 
 /// A WAV encoder.
@@ -20,11 +20,12 @@ pub struct WavEncoder<W: Write + Seek> {
     header_written: bool,
     data_size_pos: u64,
     bytes_per_frame: u32,
+    frames_per_process: u16,
 }
 
 impl<W: Write + Seek> WavEncoder<W> {
     /// Creates a new WAV encoder with a given writer.
-    pub fn new(writer: W) -> Self {
+    pub fn new(writer: W, frames_per_process: u16) -> Self {
         Self {
             writer,
             info: None,
@@ -32,6 +33,7 @@ impl<W: Write + Seek> WavEncoder<W> {
             header_written: false,
             data_size_pos: 0,
             bytes_per_frame: 0,
+            frames_per_process,
         }
     }
 
@@ -97,15 +99,6 @@ impl<W: Write + Seek> WavEncoder<W> {
         Ok(())
     }
 
-    /// Calculates minimum required payload size based on audio format.
-    fn calculate_min_payload_size(&self) -> u16 {
-        if let Some(info) = &self.info {
-            info.get_alignment_bytes() as u16
-        } else {
-            0
-        }
-    }
-
     /// Finalizes the WAV file by updating header sizes.
     /// This should be called if the stream ends unexpectedly without a `Last` or `Single` payload.
     pub fn finalize(&mut self) -> Result<(), Error>
@@ -137,10 +130,6 @@ where
     fn available(&self) -> u32 {
         u32::MAX // Can always accept data.
     }
-
-    fn get_port_requirements(&self) -> PortRequirements {
-        PortRequirements::sink(self.calculate_min_payload_size())
-    }
     
     async fn initialize(
         &mut self,
@@ -154,7 +143,10 @@ where
         self.bytes_per_frame = info.get_alignment_bytes() as u32;
         self.info = Some(info);
 
-        Ok(self.get_port_requirements())
+        Ok(PortRequirements::sink( PayloadSize { 
+            min: self.bytes_per_frame as u16, 
+            preferred: self.bytes_per_frame as u16 * self.frames_per_process 
+        }))
     }
 
     async fn reset(&mut self) -> Result<(), Self::Error> {
@@ -222,6 +214,7 @@ where
 #[cfg(test)]
 mod tests {
     use embedded_io::{ErrorType, Seek, SeekFrom, Write};
+    use embedded_audio_driver::databus::{Consumer, Producer, Operation, Databus};
     use crate::databus::slot::Slot;
     use super::*;
     
@@ -278,13 +271,15 @@ mod tests {
     #[tokio::test]
     async fn test_process_writes_header_and_data() {
         let writer = MockWriter::new();
-        let mut encoder = WavEncoder::new(writer);
+        let mut encoder = WavEncoder::new(writer, 64);
         let info = Info { sample_rate: 44100, channels: 1, bits_per_sample: 16, num_frames: None };
         
-        encoder.initialize(Some(info)).await.unwrap();
+        let requirements = encoder.initialize(Some(info)).await.unwrap();
 
         let mut in_buffer = vec![0u8; 4];
-        let slot = Slot::new(Some(&mut in_buffer), false);
+        let mut slot = Slot::new(Some(&mut in_buffer));
+        slot.register(Operation::Consume, requirements.in_.unwrap());
+        slot.register(Operation::Produce, requirements.in_.unwrap());
         
         {
             let mut p = slot.acquire_write().await;
@@ -295,9 +290,9 @@ mod tests {
 
         let mut in_port = slot.in_port();
         let mut out_port = OutPort::new_none();
-        let mut inplace_port = InPlacePort::new_none();
+        let mut in_place_port = InPlacePort::new_none();
 
-        encoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
+        encoder.process(&mut in_port, &mut out_port, &mut in_place_port).await.unwrap();
 
         assert!(encoder.header_written);
         assert_eq!(encoder.encoded_frames, 2); // 4 bytes / (16 bits/8 * 1 channel) = 2 frames
@@ -312,13 +307,15 @@ mod tests {
     #[tokio::test]
     async fn test_process_last_chunk_updates_header() {
         let writer = MockWriter::new();
-        let mut encoder = WavEncoder::new(writer);
+        let mut encoder = WavEncoder::new(writer, 300);
         let info = Info { sample_rate: 8000, channels: 2, bits_per_sample: 16, num_frames: None };
         
-        encoder.initialize(Some(info)).await.unwrap();
+        let requirements = encoder.initialize(Some(info)).await.unwrap();
 
         let mut in_buffer = vec![0u8; 1024];
-        let slot = Slot::new(Some(&mut in_buffer), false);
+        let mut slot = Slot::new(Some(&mut in_buffer));
+        slot.register(Operation::Consume, requirements.in_.unwrap());
+        slot.register(Operation::Produce, requirements.in_.unwrap());
 
         {
             let mut p = slot.acquire_write().await;
@@ -329,9 +326,9 @@ mod tests {
 
         let mut in_port = slot.in_port();
         let mut out_port = OutPort::new_none();
-        let mut inplace_port = InPlacePort::new_none();
+        let mut in_place_port = InPlacePort::new_none();
         
-        encoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
+        encoder.process(&mut in_port, &mut out_port, &mut in_place_port).await.unwrap();
 
         assert_eq!(encoder.encoded_frames, 256); // 1024 bytes / (16 bits/8 * 2 channels) = 256 frames
 

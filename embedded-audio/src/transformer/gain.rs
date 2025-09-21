@@ -14,7 +14,7 @@ use core::mem;
 use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{BaseElement, Fine, ProcessResult};
 use embedded_audio_driver::info::Info;
-use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirements};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PayloadSize, PortRequirements};
 use embedded_audio_driver::Error;
 
 // Fixed-point gain representation (Q16.16 format)
@@ -99,7 +99,8 @@ fn process_24bit_fixed(payload: &mut [u8], gain: FixedGain) {
 pub struct Gain {
     info: Option<Info>,
     fixed_gain: FixedGain,
-    port_requirements: Option<PortRequirements>,
+    bytes_per_frame: u8,
+    frames_per_process: u16,
     #[cfg(target_arch = "x86_64")]
     use_sse2: bool,
     #[cfg(target_arch = "aarch64")]
@@ -112,9 +113,9 @@ impl Gain {
     /// # Arguments
     ///
     /// * `gain` - The linear gain factor to apply. 1.0 means no change.
-    pub fn new(gain: f32) -> Self {
+    pub fn new(gain: f32, frames_per_process: u16) -> Self {
         let fixed_gain = float_to_fixed(gain);
-        Self::new_fixed_q16_16(fixed_gain)
+        Self::new_fixed_q16_16(fixed_gain, frames_per_process)
     }
 
     /// Creates a new Gain element.
@@ -122,11 +123,12 @@ impl Gain {
     /// # Arguments
     ///
     /// * `gain` - The linear gain factor to apply. Q16.16 format.
-    pub fn new_fixed_q16_16(gain: FixedGain) -> Self {
+    pub fn new_fixed_q16_16(gain: FixedGain, frames_per_process: u16) -> Self {
         Self {
             info: None,
             fixed_gain: gain,
-            port_requirements: None,
+            bytes_per_frame: 0,
+            frames_per_process,
             #[cfg(target_arch = "x86_64")]
             use_sse2: std::arch::is_x86_feature_detected!("sse2"),
             #[cfg(target_arch = "aarch64")]
@@ -163,10 +165,6 @@ impl BaseElement for Gain {
         self.info
     }
 
-    fn get_port_requirements(&self) -> PortRequirements {
-        self.port_requirements.expect("must be called after initialize")
-    }
-
     async fn initialize(
         &mut self,
         upstream_info: Option<Info>,
@@ -177,10 +175,13 @@ impl BaseElement for Gain {
             return Err(Error::Unsupported)
         }
         self.info = Some(info);
-
-        let min_payload_size = (info.bits_per_sample / 8) as u16;
-        self.port_requirements = Some(PortRequirements::new_in_place(min_payload_size));
-        Ok(self.port_requirements.unwrap())
+        
+        self.bytes_per_frame = self.info.unwrap().get_alignment_bytes();
+        
+        Ok(PortRequirements::new_in_place(PayloadSize {
+            min: self.bytes_per_frame as _,
+            preferred: self.bytes_per_frame as u16 * self.frames_per_process as u16,
+        }))
     }
 
     fn available(&self) -> u32 {
@@ -191,14 +192,14 @@ impl BaseElement for Gain {
         &mut self,
         _in_port: &mut InPort<'a, C>,
         _out_port: &mut OutPort<'a, P>,
-        inplace_port: &mut InPlacePort<'a, T>,
+        in_place_port: &mut InPlacePort<'a, T>,
     ) -> ProcessResult<Self::Error>
     where
         C: Consumer<'a>,
         P: Producer<'a>,
         T: Transformer<'a>,
     {
-        if let InPlacePort::Transformer(transformer) = inplace_port {
+        if let InPlacePort::Transformer(transformer) = in_place_port {
             let mut payload = transformer.acquire_transform().await;
             let info = self.info.ok_or(Error::NotInitialized)?;
 
@@ -318,15 +319,14 @@ mod tests {
     use super::*;
     use crate::databus::slot::Slot;
     use embedded_audio_driver::{
-        info::Info,
-        port::{InPort, OutPort},
+        databus::{Operation, Databus}, info::Info, port::{InPort, OutPort}
     };
 
     #[tokio::test]
     async fn test_gain_process_16bit_fixed_point() {
         let info = Info::new(44100, 1, 16, None);
-        let mut gain = Gain::new(2.0);
-        gain.initialize(Some(info)).await.unwrap();
+        let mut gain = Gain::new(2.0, 64);
+        let requirements = gain.initialize(Some(info)).await.unwrap();
 
         let mut buffer = vec![0u8; 16];
         let initial_samples: [i16; 8] = [1000, -2000, 3000, -4000, 5000, 20000, -30000, 15000];
@@ -335,7 +335,10 @@ mod tests {
             buffer[i*2..(i+1)*2].copy_from_slice(&sample.to_le_bytes());
         }
 
-        let slot = Slot::new(Some(&mut buffer), true);
+        let mut slot = Slot::new(Some(&mut buffer));
+        slot.register(Operation::InPlace, requirements.in_place.unwrap());
+        slot.register(Operation::Produce, requirements.in_place.unwrap());
+        slot.register(Operation::Consume, requirements.in_place.unwrap());
         {
             let mut p = slot.acquire_write().await;
             p.set_valid_length(16);
@@ -343,9 +346,9 @@ mod tests {
 
         let mut in_port = InPort::new_none();
         let mut out_port = OutPort::new_none();
-        let mut inplace_port = slot.inplace_port();
+        let mut in_place_port = slot.in_place_port();
 
-        let result = gain.process(&mut in_port, &mut out_port, &mut inplace_port).await;
+        let result = gain.process(&mut in_port, &mut out_port, &mut in_place_port).await;
         assert!(result.is_ok());
 
         let r = slot.acquire_read().await;
@@ -363,7 +366,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[tokio::test]
     async fn test_simd_detection_and_usage() {
-        let gain = Gain::new(1.5);
+        let gain = Gain::new(1.5, 64);
         
         // Test SIMD feature detection
         let expected_simd = std::arch::is_x86_feature_detected!("sse2");
@@ -372,8 +375,8 @@ mod tests {
         if expected_simd {
             // Test that SIMD produces same results as scalar
             let info = Info::new(44100, 1, 16, None);
-            let mut simd_gain = Gain::new(1.5);
-            simd_gain.initialize(Some(info)).await.unwrap();
+            let mut simd_gain = Gain::new(1.5, 64);
+            let requirements = simd_gain.initialize(Some(info)).await.unwrap();
 
             let mut simd_buffer = vec![0u8; 32];
             let test_samples: [i16; 16] = [
@@ -385,7 +388,10 @@ mod tests {
                 simd_buffer[i*2..(i+1)*2].copy_from_slice(&sample.to_le_bytes());
             }
 
-            let slot = Slot::new(Some(&mut simd_buffer), true);
+            let mut slot = Slot::new(Some(&mut simd_buffer));
+            slot.register(Operation::InPlace, requirements.in_place.unwrap());
+            slot.register(Operation::Produce, requirements.in_place.unwrap());
+            slot.register(Operation::Consume, requirements.in_place.unwrap());
             {
                 let mut p = slot.acquire_write().await;
                 p.set_valid_length(32);
@@ -393,9 +399,9 @@ mod tests {
 
             let mut in_port = InPort::new_none();
             let mut out_port = OutPort::new_none();
-            let mut inplace_port = slot.inplace_port();
+            let mut in_place_port = slot.in_place_port();
 
-            let result = simd_gain.process(&mut in_port, &mut out_port, &mut inplace_port).await;
+            let result = simd_gain.process(&mut in_port, &mut out_port, &mut in_place_port).await;
             assert!(result.is_ok());
 
             // Verify processing occurred
@@ -410,8 +416,8 @@ mod tests {
     #[tokio::test]
     async fn test_24bit_optimization() {
         let info = Info::new(48000, 1, 24, None);
-        let mut gain = Gain::new(1.25);
-        gain.initialize(Some(info)).await.unwrap();
+        let mut gain = Gain::new(1.25, 64);
+        let requirements = gain.initialize(Some(info)).await.unwrap();
 
         // Test with 24-bit samples (3 bytes each)
         let mut buffer = vec![0u8; 12]; // 4 samples * 3 bytes
@@ -424,7 +430,10 @@ mod tests {
         buffer[6..9].copy_from_slice(&[0xFF, 0xFF, 0x7F]);
         buffer[9..12].copy_from_slice(&[0x00, 0x00, 0x00]);
 
-        let slot = Slot::new(Some(&mut buffer), true);
+        let mut slot = Slot::new(Some(&mut buffer));
+        slot.register(Operation::InPlace, requirements.in_place.unwrap());
+        slot.register(Operation::Produce, requirements.in_place.unwrap());
+        slot.register(Operation::Consume, requirements.in_place.unwrap());
         {
             let mut p = slot.acquire_write().await;
             p.set_valid_length(12);
@@ -432,9 +441,9 @@ mod tests {
 
         let mut in_port = InPort::new_none();
         let mut out_port = OutPort::new_none();
-        let mut inplace_port = slot.inplace_port();
+        let mut in_place_port = slot.in_place_port();
 
-        let result = gain.process(&mut in_port, &mut out_port, &mut inplace_port).await;
+        let result = gain.process(&mut in_port, &mut out_port, &mut in_place_port).await;
         assert!(result.is_ok());
 
         // Verify the processing completed without errors
@@ -469,9 +478,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_gain_info_and_requirements() {
+    async fn test_gain_info() {
         let info = Info::new(48000, 2, 24, None);
-        let mut gain = Gain::new(1.5);
+        let mut gain = Gain::new(1.5, 64);
         assert!(gain.get_in_info().is_none());
         assert!(gain.get_out_info().is_none());
         
@@ -480,9 +489,5 @@ mod tests {
         assert_eq!(gain.get_in_info().unwrap(), info);
         assert!(gain.get_out_info().is_some());
         assert_eq!(gain.get_out_info().unwrap(), info);
-
-        let reqs = gain.get_port_requirements();
-        assert!(reqs.in_place.is_some());
-        assert_eq!(reqs.in_place.unwrap(), 3);
     }
 }

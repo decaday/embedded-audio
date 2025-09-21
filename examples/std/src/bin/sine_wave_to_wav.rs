@@ -4,7 +4,7 @@ use embassy_executor::Spawner;
 use embedded_audio::databus::slot::Slot;
 use embedded_audio::encoder::WavEncoder;
 use embedded_audio::generator::SineWaveGenerator;
-use embedded_audio_driver::databus::{Producer, Consumer};
+use embedded_audio_driver::databus::{Consumer, Operation, Producer, Databus};
 use embedded_audio_driver::element::{BaseElement, Eof};
 use embedded_audio_driver::info::Info;
 use embedded_io_adapters::std::FromStd;
@@ -31,6 +31,7 @@ async fn generate_wav() {
         info,
         440.0, // frequency (A4 note)
         0.5,   // amplitude
+        256,
     );
 
     // 2. Create a WAV file encoder.
@@ -40,21 +41,23 @@ async fn generate_wav() {
     }
     let file = File::create("temp/sine_wave_A4.wav").expect("Failed to create file");
     let file_writer = FromStd::new(file);
-    let mut encoder = WavEncoder::new(file_writer);
+    let mut encoder = WavEncoder::new(file_writer, 256);
 
     // 3. Initialize the elements in sequence.
     // The generator is a source, so it has no upstream info.
-    generator.initialize(None).await.expect("Generator failed to initialize");
+    let gen_port_requirement = generator.initialize(None).await.expect("Generator failed to initialize");
     
     // The encoder's input format is determined by the generator's output format.
     let generator_info = generator.get_out_info();
-    encoder.initialize(generator_info).await.expect("Encoder failed to initialize");
+    let enc_port_requirement = encoder.initialize(generator_info).await.expect("Encoder failed to initialize");
     
     info!("Generator Info: {:#?}", generator_info.unwrap());
 
     // 4. Create the databus to connect the elements.
     let mut buffer = vec![0u8; 4096];
-    let slot = Slot::new(Some(&mut buffer), false);
+    let mut slot = Slot::new(Some(&mut buffer));
+    slot.register(Operation::Produce, enc_port_requirement.out.unwrap());
+    slot.register(Operation::Consume, enc_port_requirement.in_.unwrap());
 
     // 5. Set up the ports for the processing loop.
     let mut gen_out_port = slot.out_port();

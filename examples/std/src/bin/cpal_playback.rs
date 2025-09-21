@@ -1,14 +1,17 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 use embassy_executor::Spawner;
+use log::*;
+use embedded_io_adapters::std::FromStd;
+
 use embedded_audio::databus::slot::Slot;
 use embedded_audio::decoder::WavDecoder;
 use embedded_audio::stream::cpal_output::{Config, CpalOutputStream};
 use embedded_audio::transformer::Gain;
-use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
-use embedded_audio_driver::element::{BaseElement, ProcessStatus::{Eof, Fine}};
+use embedded_audio_driver::databus::{Consumer, Operation, Producer, Transformer, Databus};
+use embedded_audio_driver::element::{BaseElement, Eof, Fine};
 use embedded_audio_driver::stream::BaseStream;
-use embedded_io_adapters::std::FromStd;
-use log::*;
+
+
 
 #[embassy_executor::task]
 async fn playback_wav() {
@@ -31,40 +34,44 @@ async fn playback_wav() {
     // Source: A WavDecoder reading from an in-memory file.
     let wav_data = include_bytes!("../../../../res/light-rain.wav");
     let cursor = FromStd::new(std::io::Cursor::new(wav_data));
-    let mut decoder = WavDecoder::new(cursor);
+    let mut decoder = WavDecoder::new(cursor, 512);
 
     // Transformer: A Gain element to increase volume.
-    let mut gain = Gain::new(1.3);
+    let mut gain = Gain::new(1.3, 512);
 
     // Sink: A CpalOutputStream to send data to the sound card.
     let mut cpal_stream = CpalOutputStream::<i16, 2>::new(
         Config {
             rb_capacity: None,
             latency_ms: 100,
+            frames_per_process: 512,
         },
         device,
         config,
     );
 
     // 3. Initialize the elements in sequence, passing info downstream.
-    decoder.initialize(None).await.expect("Decoder init failed");
+    let decoder_port_requirement = decoder.initialize(None).await.expect("Decoder init failed");
     let decoder_info = decoder.get_out_info();
     
-    gain.initialize(decoder_info).await.expect("Gain init failed");
+    let gain_port_requirement = gain.initialize(decoder_info).await.expect("Gain init failed");
     let gain_info = gain.get_out_info();
 
-    cpal_stream.initialize(gain_info).await.expect("CpalStream init failed");
+    let stream_port_requirement = cpal_stream.initialize(gain_info).await.expect("CpalStream init failed");
     
     info!("Decoder Info: {:#?}", decoder_info.unwrap());
     info!("Playback starting...");
     
     // 4. Create the databus (a slot with a transformer).
     let mut buffer = vec![0u8; 4096];
-    let slot = Slot::new(Some(&mut buffer), true); // `true` enables the transformer stage
+    let mut slot = Slot::new(Some(&mut buffer)); // `true` enables the transformer stage
+    slot.register(Operation::Produce, decoder_port_requirement.out.unwrap());
+    slot.register(Operation::Consume, stream_port_requirement.in_.unwrap());
+    slot.register(Operation::InPlace, gain_port_requirement.in_place.unwrap());
 
     // 5. Set up the ports.
     let mut dec_out_port = slot.out_port();
-    let mut gain_inplace_port = slot.inplace_port();
+    let mut gain_inplace_port = slot.in_place_port();
     let mut stream_in_port = slot.in_port();
 
     // 6. Start the audio stream.

@@ -100,4 +100,8 @@ impl BaseInfo for Info {
     fn get_alignment_bytes(&self) -> u8 {
         self.get_alignment_bytes()
     }
+
+    fn get_channel_count(&self) -> u8 {
+        self.channels
+    }
 }

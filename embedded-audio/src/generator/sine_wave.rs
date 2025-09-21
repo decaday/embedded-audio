@@ -5,7 +5,7 @@ use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
 use embedded_audio_driver::element::{BaseElement, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirements};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PayloadSize, PortRequirements};
 use embedded_audio_driver::Error;
 
 /// A generator that produces a sine wave.
@@ -16,6 +16,7 @@ pub struct SineWaveGenerator {
     amplitude: f32,
     current_sample: u64,
     is_first_chunk: bool,
+    frames_per_process: u16,
 }
 
 impl SineWaveGenerator {
@@ -25,7 +26,7 @@ impl SineWaveGenerator {
     /// * `info` - The audio format information (sample rate, channels, bits per sample).
     /// * `frequency` - The frequency of the sine wave in Hz.
     /// * `amplitude` - The amplitude of the wave, from 0.0 to 1.0.
-    pub fn new(info: Info, frequency: f32, amplitude: f32) -> Self {
+    pub fn new(info: Info, frequency: f32, amplitude: f32, frames_per_process: u16) -> Self {
         if !info.vaild() {
             panic!("Invalid Info for SineWaveGenerator");
         }
@@ -40,6 +41,7 @@ impl SineWaveGenerator {
             amplitude,
             current_sample: 0,
             is_first_chunk: true,
+            frames_per_process,
         }
     }
 
@@ -67,11 +69,6 @@ impl SineWaveGenerator {
         let t = sample_idx as f32 / self.info.sample_rate as f32;
         self.amplitude * sinf(2.0 * PI * self.frequency * t)
     }
-
-    /// Calculates the minimum required payload size for efficient processing.
-    fn calculate_min_payload_size(&self) -> u16 {
-        (self.info.bits_per_sample as u16 / 8) * self.info.channels as u16
-    }
 }
 
 impl BaseElement for SineWaveGenerator {
@@ -87,10 +84,6 @@ impl BaseElement for SineWaveGenerator {
         Some(self.info)
     }
 
-    fn get_port_requirements(&self) -> PortRequirements {
-        PortRequirements::source(self.calculate_min_payload_size())
-    }
-
     /// The generated stream is virtually infinite.
     fn available(&self) -> u32 {
         u32::MAX
@@ -104,6 +97,18 @@ impl BaseElement for SineWaveGenerator {
 
     async fn reset(&mut self) -> Result<(), Self::Error> {
         self.flush().await
+    }
+
+    async fn initialize(
+        &mut self,
+        _upstream_info: Option<Self::Info>,
+    ) -> Result<PortRequirements, Self::Error> {
+        
+        let min_payload_size = self.info.get_alignment_bytes();
+        Ok(PortRequirements::source(PayloadSize { 
+            min: min_payload_size as _, 
+            preferred: min_payload_size as u16 * self.frames_per_process as u16,
+        }))
     }
 
     /// The main processing function to generate sine wave data.
@@ -192,8 +197,7 @@ mod tests {
     use super::*;
     use crate::databus::slot::Slot;
     use embedded_audio_driver::{
-        payload::Position,
-        port::{InPlacePort, InPort},
+        databus::{Operation, Databus}, payload::Position, port::{InPlacePort, InPort}
     };
 
     #[tokio::test]
@@ -203,20 +207,24 @@ mod tests {
 
         // 1. Setup the generator and ports
         let info = Info::new(44100, 2, 16, None);
-        let mut generator = SineWaveGenerator::new(info, 440.0, 0.5);
+        let mut generator = SineWaveGenerator::new(info, 440.0, 0.5, 2048);
+        let requirements = generator.initialize(None).await.unwrap();
+        
         let mut buffer = vec![0u8; 1024]; // A buffer for the output payload
-        let slot = Slot::new(Some(&mut buffer), false);
+        let mut slot = Slot::new(Some(&mut buffer));
+        slot.register(Operation::Produce, requirements.out.unwrap());
+        slot.register(Operation::Consume, requirements.out.unwrap());
 
         let mut in_port = InPort::new_none();
         let mut out_port = slot.out_port();
-        let mut inplace_port = InPlacePort::new_none();
+        let mut in_place_port = InPlacePort::new_none();
 
         // 2. First process call
         assert_eq!(generator.current_sample, 0, "Initial sample count should be 0");
         assert!(generator.is_first_chunk, "Should be the first chunk initially");
 
         generator
-            .process(&mut in_port, &mut out_port, &mut inplace_port)
+            .process(&mut in_port, &mut out_port, &mut in_place_port)
             .await
             .expect("First process call should succeed");
 
@@ -247,7 +255,7 @@ mod tests {
 
         // 4. Second process call
         generator
-            .process(&mut in_port, &mut out_port, &mut inplace_port)
+            .process(&mut in_port, &mut out_port, &mut in_place_port)
             .await
             .expect("Second process call should succeed");
         
@@ -272,16 +280,15 @@ mod tests {
     }
 
     #[test]
-    fn test_sine_wave_info_and_requirements() {
+    fn test_sine_wave_info() {
         // Test case: Verify that the generator reports correct information
         // and port requirements.
 
         let info = Info::new(48000, 1, 24, None);
         let info2 = info.clone();
 
-        let generator = SineWaveGenerator::new(info, 1000.0, 1.0);
+        let generator = SineWaveGenerator::new(info, 1000.0, 1.0, 64);
 
-        assert!(generator.get_port_requirements().out_payload.is_some());
         assert!(generator.get_in_info().is_none());
         assert_eq!(generator.get_out_info(), Some(info2));
 
@@ -291,13 +298,6 @@ mod tests {
         assert_eq!(out_info.channels, 1);
         assert_eq!(out_info.bits_per_sample, 24);
         assert!(out_info.num_frames.is_none(), "Num frames should be None for an infinite stream");
-
-        // Port requirement check
-        let min_payload_size = (24 / 8) * 1;
-        assert_eq!(
-            generator.get_port_requirements().out_payload,
-            Some(min_payload_size)
-        );
         
         // Available frames check
         assert_eq!(generator.available(), u32::MAX, "Available frames should be max for an infinite stream");

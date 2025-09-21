@@ -4,7 +4,7 @@ use embedded_audio_driver::databus::{Producer};
 use embedded_audio_driver::element::{BaseElement, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::port::{InPort, OutPort, InPlacePort, PortRequirements};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PayloadSize, PortRequirements};
 use embedded_audio_driver::Error;
 
 /// A Simlpe WAV decoder
@@ -17,13 +17,14 @@ pub struct WavDecoder<R: Read + Seek> {
     data_start: u64,
     data_end: u64,
     current_frame: u64,
-    bytes_per_frame: u32,
+    bytes_per_frame: u8,
     is_first_chunk: bool,
+    frames_per_process: u16,
 }
 
 impl<R: Read + Seek> WavDecoder<R> {
     /// Creates a new WAV decoder with a given reader.
-    pub fn new(reader: R) -> Self {
+    pub fn new(reader: R,  frames_per_process: u16) -> Self {
         Self {
             reader,
             info: None,
@@ -32,6 +33,7 @@ impl<R: Read + Seek> WavDecoder<R> {
             current_frame: 0,
             bytes_per_frame: 0,
             is_first_chunk: true,
+            frames_per_process,
         }
     }
 
@@ -74,7 +76,7 @@ impl<R: Read + Seek> WavDecoder<R> {
                     if !info.vaild() {
                         return Err(Error::InvalidParameter);
                     }
-                    self.bytes_per_frame = info.get_alignment_bytes() as u32;
+                    self.bytes_per_frame = info.get_alignment_bytes();
 
                     // Skip rest of fmt chunk if it's larger than 16
                     if chunk_size > 16 {
@@ -87,7 +89,7 @@ impl<R: Read + Seek> WavDecoder<R> {
                     self.data_end = self.data_start + chunk_size as u64;
                     
                     if self.bytes_per_frame > 0 {
-                        info.num_frames = Some((chunk_size / self.bytes_per_frame) as u64);
+                        info.num_frames = Some((chunk_size / self.bytes_per_frame as u32) as u64);
                     }
                     data_chunk_found = true;
                 }
@@ -131,22 +133,17 @@ where
         u32::MAX // If num_frames is unknown, assume a large number.
     }
 
-    fn get_port_requirements(&self) -> PortRequirements {
-        let min_payload_size = if let Some(info) = &self.info {
-             // A reasonable buffer size, e.g., for 256 frames
-            (info.get_alignment_bytes() as u16) * 256
-        } else {
-            0
-        };
-        PortRequirements::source(min_payload_size)
-    }
-
     async fn initialize(
         &mut self,
         _upstream_info: Option<Self::Info>,
     ) -> Result<PortRequirements, Self::Error> {
         self.parse_header()?;
-        Ok(self.get_port_requirements())
+        let min = self.info.unwrap().get_alignment_bytes();
+        self.bytes_per_frame = min;
+        Ok(PortRequirements::source(PayloadSize { 
+            min: min as _,
+            preferred: min as u16 * self.frames_per_process as u16,
+        }))
     }
 
     async fn reset(&mut self) -> Result<(), Self::Error> {
@@ -182,8 +179,9 @@ where
             let mut payload = producer.acquire_write().await;
             
             // Limit read to the max payload size and remaining data in the chunk.
-            let max_read = (self.data_end - current_pos_bytes).min(payload.len() as u64) as usize;
-            let aligned_read = (max_read as u32 / self.bytes_per_frame) * self.bytes_per_frame;
+            let max_read = (self.data_end - current_pos_bytes)
+                .min(payload.len() as u64) as usize;
+            let aligned_read = (max_read as u32 / self.bytes_per_frame as u32) * self.bytes_per_frame as u32;
 
             if aligned_read == 0 {
                 panic!("Payload buffer too small for even one frame");
@@ -223,7 +221,7 @@ mod tests {
     use std::io::Cursor;
 
     use crate::databus::slot::Slot;
-    use embedded_audio_driver::databus::{Producer, Consumer};
+    use embedded_audio_driver::databus::{Consumer, Operation, Producer, Databus};
 
     // --- Real File Data Integration Test ---
     const REAL_WAV_FILE: &[u8] = include_bytes!("../../../res/light-rain.wav");
@@ -231,7 +229,7 @@ mod tests {
     #[test]
     fn test_metadata_parsing_from_real_file() {
         let reader = FromStd::new(Cursor::new(REAL_WAV_FILE));
-        let mut decoder = WavDecoder::new(reader);
+        let mut decoder = WavDecoder::new(reader, 64);
         decoder.parse_header().expect("Failed to parse header from real WAV file");
         let info = decoder.get_out_info().expect("Output info should be available after parsing");
         assert_eq!(info.sample_rate, 44100, "Sample rate mismatch");
@@ -242,11 +240,11 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_and_process_real_file() {
         let reader = FromStd::new(Cursor::new(REAL_WAV_FILE));
-        let mut decoder = WavDecoder::new(reader);
+        let mut decoder = WavDecoder::new(reader, 2048);
 
         // 1. Initialize should correctly parse header
         let requirements = decoder.initialize(None).await.expect("Initialization failed");
-        assert!(requirements.out_payload.is_some());
+        assert!(requirements.out.is_some());
 
         let info = decoder.get_out_info().expect("Output info should be available after init");
         assert_eq!(info.sample_rate, 44100);
@@ -256,13 +254,15 @@ mod tests {
 
         // 2. Process should read data and set metadata correctly
         let mut buffer = vec![0u8; 1024];
-        let slot = Slot::new(Some(&mut buffer), false);
+        let mut slot = Slot::new(Some(&mut buffer));
+        slot.register(Operation::Produce, requirements.out.unwrap());
+        slot.register(Operation::Consume, requirements.out.unwrap());
 
         let mut in_port = InPort::new_none();
         let mut out_port = slot.out_port();
-        let mut inplace_port = InPlacePort::new_none();
+        let mut in_place_port = InPlacePort::new_none();
 
-        let result = decoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
+        let result = decoder.process(&mut in_port, &mut out_port, &mut in_place_port).await.unwrap();
         assert_eq!(result, Fine);
 
         let current_frame_after_1 = decoder.current_frame;
@@ -275,7 +275,7 @@ mod tests {
         } // payload is dropped
 
         // 3. Process again should read the next chunk
-        let result2 = decoder.process(&mut in_port, &mut out_port, &mut inplace_port).await.unwrap();
+        let result2 = decoder.process(&mut in_port, &mut out_port, &mut in_place_port).await.unwrap();
         assert_eq!(result2, Fine);
         assert!(decoder.current_frame > current_frame_after_1);
 
@@ -368,7 +368,7 @@ mod tests {
     async fn test_header_parsing_with_mock_data() {
         let wav_data = create_valid_wav_data();
         let reader = MockReader::new(wav_data);
-        let mut decoder = WavDecoder::new(reader);
+        let mut decoder = WavDecoder::new(reader, 64);
 
         decoder.initialize(None).await.expect("Parsing generated header should succeed");
 
@@ -385,7 +385,7 @@ mod tests {
         let mut invalid_data = create_valid_wav_data();
         invalid_data[0..4].copy_from_slice(b"NOPE"); // Corrupt the header
         let reader = MockReader::new(invalid_data);
-        let mut decoder = WavDecoder::new(reader);
+        let mut decoder = WavDecoder::new(reader, 64);
 
         let result = decoder.initialize(None).await;
         assert!(result.is_err(), "Parsing invalid header should fail");
