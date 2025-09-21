@@ -11,12 +11,10 @@ use core::arch::aarch64::*;
 use core::arch::x86_64::*;
 use core::mem;
 
-use embedded_io::{Read, Seek, Write};
-
 use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
-use embedded_audio_driver::element::{Element, Fine, ProcessResult};
+use embedded_audio_driver::element::{BaseElement, Fine, ProcessResult};
 use embedded_audio_driver::info::Info;
-use embedded_audio_driver::port::{Dmy, InPlacePort, InPort, OutPort, PortRequirements};
+use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirements};
 use embedded_audio_driver::Error;
 
 // Fixed-point gain representation (Q16.16 format)
@@ -153,8 +151,9 @@ impl Gain {
     }
 }
 
-impl Element for Gain {
+impl BaseElement for Gain {
     type Error = Error;
+    type Info = Info;
 
     fn get_in_info(&self) -> Option<Info> {
         self.info
@@ -168,15 +167,10 @@ impl Element for Gain {
         self.port_requirements.expect("must be called after initialize")
     }
 
-    async fn initialize<'a, R, W>(
+    async fn initialize(
         &mut self,
-        _in_port: &mut InPort<'a, R, Dmy>,
-        _out_port: &mut OutPort<'a, W, Dmy>,
         upstream_info: Option<Info>,
     ) -> Result<PortRequirements, Self::Error>
-    where
-        R: Read + Seek,
-        W: Write + Seek,
     {
         let info = upstream_info.ok_or(Error::InvalidParameter)?;
         if ![8, 16, 24, 32].contains(&info.bits_per_sample) {
@@ -193,15 +187,13 @@ impl Element for Gain {
         u32::MAX
     }
 
-    async fn process<'a, R, W, C, P, T>(
+    async fn process<'a, C, P, T>(
         &mut self,
-        _in_port: &mut InPort<'a, R, C>,
-        _out_port: &mut OutPort<'a, W, P>,
+        _in_port: &mut InPort<'a, C>,
+        _out_port: &mut OutPort<'a, P>,
         inplace_port: &mut InPlacePort<'a, T>,
     ) -> ProcessResult<Self::Error>
     where
-        R: Read + Seek,
-        W: Write + Seek,
         C: Consumer<'a>,
         P: Producer<'a>,
         T: Transformer<'a>,
@@ -334,7 +326,7 @@ mod tests {
     async fn test_gain_process_16bit_fixed_point() {
         let info = Info::new(44100, 1, 16, None);
         let mut gain = Gain::new(2.0);
-        gain.initialize(&mut InPort::new_none(), &mut OutPort::new_none(), Some(info)).await.unwrap();
+        gain.initialize(Some(info)).await.unwrap();
 
         let mut buffer = vec![0u8; 16];
         let initial_samples: [i16; 8] = [1000, -2000, 3000, -4000, 5000, 20000, -30000, 15000];
@@ -381,7 +373,7 @@ mod tests {
             // Test that SIMD produces same results as scalar
             let info = Info::new(44100, 1, 16, None);
             let mut simd_gain = Gain::new(1.5);
-            simd_gain.initialize(&mut InPort::new_none(), &mut OutPort::new_none(), Some(info)).await.unwrap();
+            simd_gain.initialize(Some(info)).await.unwrap();
 
             let mut simd_buffer = vec![0u8; 32];
             let test_samples: [i16; 16] = [
@@ -419,7 +411,7 @@ mod tests {
     async fn test_24bit_optimization() {
         let info = Info::new(48000, 1, 24, None);
         let mut gain = Gain::new(1.25);
-        gain.initialize(&mut InPort::new_none(), &mut OutPort::new_none(), Some(info)).await.unwrap();
+        gain.initialize(Some(info)).await.unwrap();
 
         // Test with 24-bit samples (3 bytes each)
         let mut buffer = vec![0u8; 12]; // 4 samples * 3 bytes
@@ -483,7 +475,7 @@ mod tests {
         assert!(gain.get_in_info().is_none());
         assert!(gain.get_out_info().is_none());
         
-        let _ = gain.initialize(&mut InPort::new_none(), &mut OutPort::new_none(), Some(info)).await;
+        let _ = gain.initialize(Some(info)).await;
         assert!(gain.get_in_info().is_some());
         assert_eq!(gain.get_in_info().unwrap(), info);
         assert!(gain.get_out_info().is_some());

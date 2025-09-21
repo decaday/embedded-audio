@@ -1,9 +1,8 @@
 use core::f32::consts::PI;
 use libm::sinf;
-use embedded_io::{Read, Seek, Write};
 
 use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
-use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
+use embedded_audio_driver::element::{BaseElement, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
 use embedded_audio_driver::payload::Position;
 use embedded_audio_driver::port::{InPlacePort, InPort, OutPort, PortRequirements};
@@ -75,8 +74,9 @@ impl SineWaveGenerator {
     }
 }
 
-impl Element for SineWaveGenerator {
+impl BaseElement for SineWaveGenerator {
     type Error = Error;
+    type Info = Info;
 
     fn get_in_info(&self) -> Option<Info> {
         None
@@ -107,15 +107,13 @@ impl Element for SineWaveGenerator {
     }
 
     /// The main processing function to generate sine wave data.
-    async fn process<'a, R, W, C, P, T>(
+    async fn process<'a, C, P, T>(
         &mut self,
-        _in_port: &mut InPort<'a, R, C>,
-        out_port: &mut OutPort<'a, W, P>,
+        _in_port: &mut InPort<'a, C>,
+        out_port: &mut OutPort<'a, P>,
         _inplace_port: &mut InPlacePort<'a, T>,
     ) -> ProcessResult<Self::Error>
     where
-        R: Read + Seek,
-        W: Write + Seek,
         C: Consumer<'a>,
         P: Producer<'a>,
         T: Transformer<'a>,

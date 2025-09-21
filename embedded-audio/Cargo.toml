@@ -14,6 +14,7 @@ license = "Apache-2.0"
 [dependencies]
 # embedded-audio-driver = { version = "0.0.0" }
 embedded-audio-driver = { path = "../embedded-audio-driver" }
+rivulets = { version = "*", path = "../../rivulets/rivulets" }
 
 # ringbuffer = "0.15.0"
 embedded-io = "0.6"
@@ -41,9 +42,10 @@ defmt = ["dep:defmt", "embassy-sync/defmt"]
 log = ["dep:log", "embassy-sync/log"]
 
 std = [
+    "rivulets/std",
+    "embedded-audio-driver/std", 
     "alloc",
     "embedded-io/std", 
-    "embedded-audio-driver/std", 
     # "embassy-time/std",
     "embassy-sync/std",
     "ringbuf/std",

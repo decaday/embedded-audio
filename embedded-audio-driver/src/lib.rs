@@ -5,19 +5,10 @@ pub mod stream;
 // pub mod encoder;
 pub mod element;
 pub mod info;
-// pub mod transform;
-pub mod port;
-pub mod databus;
-pub mod payload;
+pub use rivulets_driver::port;
+pub use rivulets_driver::databus;
+pub use rivulets_driver::payload;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        pub use std::sync::Mutex;
-        pub use std::sync::MutexGuard;
-    } else {
-        pub type Mutex<T> = embassy_sync::blocking_mutex::CriticalSectionMutex<T>;
-    }
-}
 
 #[derive(Debug)]
 pub enum Error {

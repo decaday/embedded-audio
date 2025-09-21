@@ -1,27 +1,22 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 use embassy_executor::Spawner;
-use embedded_audio::transformer::Gain;
-use log::*;
-
 use embedded_audio::databus::slot::Slot;
 use embedded_audio::decoder::WavDecoder;
 use embedded_audio::stream::cpal_output::{Config, CpalOutputStream};
-use embedded_audio_driver::element::Element;
-use embedded_audio_driver::port::{InPlacePort, InPort, OutPort};
-use embedded_audio_driver::databus::{Producer, Consumer, Transformer};
-use embedded_audio_driver::stream::Stream;
-use embedded_audio_driver::element::ProcessStatus::{Eof, Fine};
+use embedded_audio::transformer::Gain;
+use embedded_audio_driver::databus::{Consumer, Producer, Transformer};
+use embedded_audio_driver::element::{BaseElement, ProcessStatus::{Eof, Fine}};
+use embedded_audio_driver::stream::BaseStream;
+use embedded_io_adapters::std::FromStd;
+use log::*;
 
-// The main task for playing back the WAV file.
 #[embassy_executor::task]
 async fn playback_wav() {
     info!("Starting CPAL playback task...");
 
     // 1. Set up the CPAL host and output device.
     let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("no output device available");
+    let device = host.default_output_device().expect("no output device available");
     let supported_config = device.default_output_config().expect("no default config");
     let mut config: cpal::StreamConfig = supported_config.into();
     
@@ -32,74 +27,78 @@ async fn playback_wav() {
     info!("Using output device: \"{}\"", device.name().unwrap());
     info!("Using output config: {:?}", config);
     
-    // 2. Create the sink element: a CpalOutputStream.
-    // This stream will consume audio data and send it to the sound card.
+    // 2. Create the pipeline elements.
+    // Source: A WavDecoder reading from an in-memory file.
+    let wav_data = include_bytes!("../../../../res/light-rain.wav");
+    let cursor = FromStd::new(std::io::Cursor::new(wav_data));
+    let mut decoder = WavDecoder::new(cursor);
+
+    // Transformer: A Gain element to increase volume.
+    let mut gain = Gain::new(1.3);
+
+    // Sink: A CpalOutputStream to send data to the sound card.
     let mut cpal_stream = CpalOutputStream::<i16, 2>::new(
         Config {
-            rb_capacity: None, // Use default buffer capacity
+            rb_capacity: None,
             latency_ms: 100,
         },
         device,
         config,
-    ).expect("Failed to create CPAL output stream");
+    );
 
-    // 3. Create the source element: a WavDecoder.
-    // Load the WAV file data from an included byte slice.
-    let wav_data = include_bytes!("../../../../res/light-rain.wav");
-    let mut cursor = embedded_io_adapters::std::FromStd::new(std::io::Cursor::new(wav_data));
-    let mut decoder = WavDecoder::new();
-    let mut gain = Gain::new(1.3);
-
-    // 4. Create the databus to connect the elements.
-    let mut buffer = vec![0u8; 512];
-    let slot = Slot::new(Some(&mut buffer), true);
+    // 3. Initialize the elements in sequence, passing info downstream.
+    decoder.initialize(None).await.expect("Decoder init failed");
+    let decoder_info = decoder.get_out_info();
     
-    // Define the input and output ports for this iteration.
-    let mut dec_in_port = InPort::new_reader(&mut cursor);
+    gain.initialize(decoder_info).await.expect("Gain init failed");
+    let gain_info = gain.get_out_info();
+
+    cpal_stream.initialize(gain_info).await.expect("CpalStream init failed");
+    
+    info!("Decoder Info: {:#?}", decoder_info.unwrap());
+    info!("Playback starting...");
+    
+    // 4. Create the databus (a slot with a transformer).
+    let mut buffer = vec![0u8; 4096];
+    let slot = Slot::new(Some(&mut buffer), true); // `true` enables the transformer stage
+
+    // 5. Set up the ports.
     let mut dec_out_port = slot.out_port();
-    let mut stream_in_port = slot.in_port();
     let mut gain_inplace_port = slot.inplace_port();
-    
-    let mut empty_inplace_port = InPlacePort::new_none();
-    let mut empty_in_port = InPort::new_none();
-    let mut empty_out_port = OutPort::new_none();
-    
-    decoder.initialize(&mut dec_in_port, &mut empty_out_port, None).await.unwrap();
-    gain.initialize(&mut empty_in_port, &mut empty_out_port, decoder.get_out_info()).await.unwrap();
-    cpal_stream.initialize(&mut empty_in_port, &mut empty_out_port, decoder.get_out_info()).await.unwrap();
-    
+    let mut stream_in_port = slot.in_port();
+
+    // 6. Start the audio stream.
     cpal_stream.start().expect("Failed to start CPAL stream");
 
-    info!("Starting playback loop...");
+    // 7. Run the processing loop.
     loop {
-        // Process the decoder to fill the slot with audio data.
-        decoder.process(&mut dec_in_port, &mut dec_out_port, &mut empty_inplace_port).await.unwrap();
+        // Step 1: Decode a chunk of the WAV file into the slot.
+        if let Eof = decoder.process(&mut Default::default(), &mut dec_out_port, &mut Default::default()).await.unwrap() {
+            // If the decoder is done, we still need to process the last chunk through the rest of the pipeline.
+        }
 
-        gain.process(&mut empty_in_port, &mut empty_out_port, &mut gain_inplace_port).await.unwrap();
+        // Step 2: Apply gain to the data in-place in the slot.
+        gain.process(&mut Default::default(), &mut Default::default(), &mut gain_inplace_port).await.unwrap();
 
-        // Process the CPAL stream to consume the data from the slot.
-        match cpal_stream.process(&mut stream_in_port, &mut empty_out_port, &mut empty_inplace_port).await.unwrap() {
+        // Step 3: Send the processed chunk from the slot to the CPAL stream.
+        match cpal_stream.process(&mut stream_in_port, &mut Default::default(), &mut Default::default()).await.unwrap() {
             Eof => {
-                info!("Reached end of WAV file.");
+                info!("Playback finished.");
                 break;
             }
             Fine => { /* Continue processing */ }
         }
     }
-    
-    info!("Playback loop finished. The application will now exit.");
-    // The stream will stop automatically when CpalOutputStream is dropped.
+
+    cpal_stream.stop().unwrap();
+    info!("Playback loop finished.");
 }
 
-// Embassy's main entry point for the std (desktop) environment.
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    // Initialize a simple logger.
     env_logger::builder()
-        .filter_level(log::LevelFilter::Info) // Use Info level to reduce verbosity
+        .filter_level(log::LevelFilter::Info)
         .format_timestamp_nanos()
         .init();
-
-    // Spawn the main playback task.
     spawner.spawn(playback_wav()).unwrap();
 }

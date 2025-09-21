@@ -1,18 +1,17 @@
 use std::sync::Arc;
 
-use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::SizedSample;
 use async_ringbuf::traits::{AsyncProducer, Consumer, Observer, Producer, Split};
 use async_ringbuf::{AsyncHeapRb, AsyncHeapProd, AsyncHeapCons};
+use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::SizedSample;
 
-use embedded_audio_driver::element::{Element, ProcessResult, Eof, Fine};
+use embedded_audio_driver::databus::{Consumer as DatabusConsumer, Producer as DatabusProducer, Transformer as DatabusTransformer};
+use embedded_audio_driver::element::{BaseElement, ProcessResult, Eof, Fine};
 use embedded_audio_driver::info::Info;
-use embedded_audio_driver::port::{Dmy, InPlacePort, InPort, OutPort, PortRequirements};
-use embedded_audio_driver::stream::{Stream, StreamState};
-use embedded_audio_driver::Error;
 use embedded_audio_driver::payload::Position;
-use embedded_audio_driver::databus::{Consumer as DatabusConsumer, Producer as DatabusProducer, Transformer};
-
+use embedded_audio_driver::port::{InPort, OutPort, InPlacePort, PortRequirements};
+use embedded_audio_driver::stream::{BaseStream, StreamState};
+use embedded_audio_driver::Error;
 use crate::utils::FromBytes;
 use crate::Channel;
 
@@ -54,12 +53,11 @@ impl Config {
     }
 
     /// Determines the final ring buffer capacity, ensuring it's sufficient.
-    fn get_rb_capacity_samples<T: SizedSample>(
+    fn get_rb_capacity_bytes(
         &self,
         info: &Info,
     ) -> Result<usize, CapacityTooSmallError> {
         let min_cap_bytes = self.get_rb_min_capacity_bytes(info);
-        let sample_size = std::mem::size_of::<T>();
 
         let final_cap_bytes = match self.rb_capacity {
             Some(cap) => {
@@ -72,7 +70,7 @@ impl Config {
             // If no capacity is provided, default to twice the minimum required size.
             None => min_cap_bytes * 2,
         };
-        Ok(final_cap_bytes / sample_size)
+        Ok(final_cap_bytes)
     }
 }
 
@@ -82,11 +80,12 @@ pub struct CpalOutputStream<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'st
     cpal_device: cpal::Device,
     cpal_config: cpal::StreamConfig,
     stream: Option<cpal::Stream>,
-    rb_producer: AsyncHeapProd<T>,
+    rb_producer: Option<AsyncHeapProd<T>>,
     rb_consumer: Option<AsyncHeapCons<T>>,
     flush_channel: Arc<Channel<bool, 1>>,
-    info: Info,
+    info: Option<Info>,
     state: StreamState,
+    config: Config,
     _phantom: core::marker::PhantomData<T>,
 }
 
@@ -97,61 +96,46 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         config: Config,
         cpal_device: cpal::Device,
         cpal_config: cpal::StreamConfig,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let info = Info {
-            sample_rate: cpal_config.sample_rate.0,
-            bits_per_sample: (T::FORMAT.sample_size() * 8) as u8,
-            channels: cpal_config.channels as u8,
-            num_frames: None,
-        };
-
-        let rb_capacity_samples = config.get_rb_capacity_samples::<T>(&info)?;
-        let ring_buffer = AsyncHeapRb::<T>::new(rb_capacity_samples);
-        let (mut producer, consumer) = ring_buffer.split();
-
-        
-
-        // Pre-fill the buffer with silence to satisfy the initial latency requirement
-        let min_samples_to_fill = config.get_rb_min_capacity_bytes(&info) / std::mem::size_of::<T>();
-        for _ in 0..min_samples_to_fill {
-            producer
-                .try_push(T::EQUILIBRIUM)
-                .unwrap_or_else(|_| panic!("Initial buffer fill should not fail"));
-        }
-
-        Ok(CpalOutputStream {
+    ) -> Self {
+        CpalOutputStream {
             cpal_device,
             cpal_config,
             stream: None,
-            rb_producer: producer,
-            rb_consumer: Some(consumer),
+            rb_producer: None,
+            rb_consumer: None,
             flush_channel: Arc::new(Channel::new()),
-            info,
-            state: StreamState::Uninitialized, // Stream starts in the Uninitialized state.
+            info: None,
+            state: StreamState::Uninitialized,
+            config,
             _phantom: core::marker::PhantomData,
-        })
+        }
     }
 }
 
-impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize> Element
+impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize> BaseElement
     for CpalOutputStream<T, SIZE>
 {
     type Error = Error;
+    type Info = Info;
 
     fn get_out_info(&self) -> Option<Info> {
-        None
+        None // This is a sink element.
     }
 
     fn get_in_info(&self) -> Option<Info> {
-        Some(self.info)
+        self.info
     }
 
     fn get_port_requirements(&self) -> PortRequirements {
-        PortRequirements::sink(1)
+        PortRequirements::sink(SIZE as u16)
     }
 
     fn available(&self) -> u32 {
-        (self.rb_producer.vacant_len() * std::mem::size_of::<T>()) as u32
+        if let Some(producer) = &self.rb_producer {
+            (producer.vacant_len() * std::mem::size_of::<T>()) as u32
+        } else {
+            0
+        }
     }
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
@@ -159,39 +143,56 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         Ok(())
     }
 
-    async fn initialize<R, W>(
-            &mut self,
-            _in_port: &mut InPort<'_, R, Dmy>,
-            _out_port: &mut OutPort<'_, W, Dmy>,
-            _upstream_info: Option<Info>,
-        ) -> Result<PortRequirements, Self::Error>
-        where
-            R: embedded_io::Read + embedded_io::Seek,
-            W: embedded_io::Write + embedded_io::Seek {
-        
+    async fn initialize(
+        &mut self,
+        upstream_info: Option<Self::Info>,
+    ) -> Result<PortRequirements, Self::Error> {
         if self.state != StreamState::Uninitialized {
-             return Err(Error::InvalidState);
+            return Err(Error::InvalidState);
         }
+
+        let info = upstream_info.ok_or(Error::InvalidParameter)?;
+        self.info = Some(info);
+
+        // --- Ring Buffer Initialization ---
+        let rb_capacity_bytes = self.config.get_rb_capacity_bytes(&info).map_err(|_| Error::InvalidParameter)?;
+        let rb_capacity_samples = rb_capacity_bytes / std::mem::size_of::<T>();
+        let ring_buffer = AsyncHeapRb::<T>::new(rb_capacity_samples);
+        let (mut producer, consumer) = ring_buffer.split();
+        
+        // Pre-fill the buffer with silence to satisfy the initial latency requirement
+        let min_samples_to_fill = self.config.get_rb_min_capacity_bytes(&info) / std::mem::size_of::<T>();
+        for _ in 0..min_samples_to_fill {
+            producer
+                .try_push(T::EQUILIBRIUM)
+                .map_err(|_| Error::BufferFull)?; // Should not fail on a new buffer
+        }
+        self.rb_producer = Some(producer);
+        self.rb_consumer = Some(consumer);
+
+
+        // --- CPAL Stream Initialization ---
         let mut consumer = self.rb_consumer.take().expect("Consumer is only taken once during init");
-
         let flush_receiver = Arc::clone(&self.flush_channel);
+        let err_fn = |err| eprintln!("[cpal_output] stream error: {}", err);
 
-        let err_fn = |err| eprintln!("an error occurred on the output audio stream: {}", err);
         let output_data_fn = move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             let mut flushed_this_block = false;
             let mut input_fell_behind = false;
 
-            for sample in data {
-                 if flushed_this_block {
+            for sample in data.iter_mut() {
+                if flushed_this_block {
                     *sample = T::EQUILIBRIUM;
                     continue;
                 }
+
                 if flush_receiver.try_receive().is_ok() {
                     consumer.clear();
                     flushed_this_block = true;
                     *sample = T::EQUILIBRIUM;
                     continue;
                 }
+
                 *sample = match consumer.try_pop() {
                     Some(s) => s,
                     None => {
@@ -200,12 +201,16 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
                     }
                 };
             }
+
             if input_fell_behind {
-                eprintln!("input stream fell behind: try increasing latency or buffer size");
+                // Use a non-blocking logger or a more robust mechanism in real applications
+                eprintln!("[cpal_output] buffer underrun: input stream fell behind");
             }
         };
 
-        let stream = self.cpal_device.build_output_stream(&self.cpal_config, output_data_fn, err_fn, None)
+        let stream = self
+            .cpal_device
+            .build_output_stream(&self.cpal_config, output_data_fn, err_fn, None)
             .map_err(|_| Error::DeviceError)?;
         
         self.stream = Some(stream);
@@ -214,35 +219,36 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
         Ok(self.get_port_requirements())
     }
 
-    async fn process<'b, R, W, C, P, TF>(
+    async fn process<'a, C, P, TF>(
         &mut self,
-        in_port: &mut InPort<'b, R, C>,
-        _out_port: &mut OutPort<'b, W, P>,
-        _inplace_port: &mut InPlacePort<'b, TF>,
+        in_port: &mut InPort<'a, C>,
+        _out_port: &mut OutPort<'a, P>,
+        _inplace_port: &mut InPlacePort<'a, TF>,
     ) -> ProcessResult<Self::Error>
     where
-        R: embedded_io::Read + embedded_io::Seek,
-        W: embedded_io::Write + embedded_io::Seek,
-        C: DatabusConsumer<'b>,
-        P: DatabusProducer<'b>,
-        TF: Transformer<'b>,
+        C: DatabusConsumer<'a>,
+        P: DatabusProducer<'a>,
+        TF: DatabusTransformer<'a>,
     {
         if self.state != StreamState::Running {
-            return Err(Error::InvalidState); // Not running, so can't process
+            return Err(Error::InvalidState);
         }
+
+        let producer = self.rb_producer.as_mut().ok_or(Error::NotInitialized)?;
 
         if let InPort::Consumer(databus) = in_port {
             let payload = databus.acquire_read().await;
-            let sample_size = std::mem::size_of::<T>();
-
+            
             let samples = payload
-                .chunks_exact(sample_size)
+                .chunks_exact(SIZE)
                 .map(|chunk| T::from_le_bytes(chunk.try_into().unwrap()));
             
             for sample in samples {
-                if self.rb_producer.push(sample).await.is_err() {
+                if producer.push(sample).await.is_err() {
+                    // This error means the audio thread (consumer) has been dropped,
+                    // which is a critical failure.
                     self.state = StreamState::Stopped;
-                    return Err(Error::DeviceError); // Audio thread closed
+                    return Err(Error::DeviceError);
                 }
             }
             
@@ -259,10 +265,13 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
     }
 }
 
-impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize> Stream
+impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize> BaseStream
     for CpalOutputStream<T, SIZE>
 {
     fn start(&mut self) -> Result<(), Self::Error> {
+        if self.state != StreamState::Initialized && self.state != StreamState::Stopped {
+            return Err(Error::InvalidState);
+        }
         if let Some(stream) = self.stream.as_ref() {
             stream.play().map_err(|_| Error::DeviceError)?;
             self.state = StreamState::Running;
@@ -283,6 +292,9 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
     }
 
     fn pause(&mut self) -> Result<(), Self::Error> {
+        if self.state != StreamState::Running {
+            return Err(Error::InvalidState);
+        }
         if let Some(stream) = self.stream.as_ref() {
             stream.pause().map_err(|_| Error::DeviceError)?;
             self.state = StreamState::Paused;
@@ -293,15 +305,16 @@ impl<T: SizedSample + FromBytes<SIZE> + Send + Sync + 'static, const SIZE: usize
     }
 
     fn resume(&mut self) -> Result<(), Self::Error> {
-        if self.state == StreamState::Paused {
-            if let Some(stream) = self.stream.as_ref() {
-                stream.play().map_err(|_| Error::DeviceError)?;
-                self.state = StreamState::Running;
-            } else {
-                 return Err(Error::NotInitialized);
-            }
+        if self.state != StreamState::Paused {
+            return Err(Error::InvalidState);
         }
-        Ok(())
+        if let Some(stream) = self.stream.as_ref() {
+            stream.play().map_err(|_| Error::DeviceError)?;
+            self.state = StreamState::Running;
+            Ok(())
+        } else {
+            Err(Error::NotInitialized)
+        }
     }
 
     fn get_state(&self) -> StreamState {
