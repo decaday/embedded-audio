@@ -1,7 +1,7 @@
 use std::fs::File;
 
 use embassy_executor::Spawner;
-use embedded_audio::databus::slot::Slot;
+use embedded_audio::databus::slot::HeapSlot;
 use embedded_audio::encoder::WavEncoder;
 use embedded_audio::generator::SineWaveGenerator;
 use embedded_audio_driver::databus::{Consumer, Operation, Producer, Databus};
@@ -54,9 +54,8 @@ async fn generate_wav() {
     info!("Generator Info: {:#?}", generator_info.unwrap());
 
     // 4. Create the databus to connect the elements.
-    let mut buffer = vec![0u8; 4096];
-    let mut slot = Slot::new(Some(&mut buffer));
-    slot.register(Operation::Produce, enc_port_requirement.out.unwrap());
+    let mut slot = HeapSlot::new_heap(4096);
+    slot.register(Operation::Produce, gen_port_requirement.out.unwrap());
     slot.register(Operation::Consume, enc_port_requirement.in_.unwrap());
 
     // 5. Set up the ports for the processing loop.

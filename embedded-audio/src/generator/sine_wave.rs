@@ -195,7 +195,7 @@ impl BaseElement for SineWaveGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::databus::slot::Slot;
+    use crate::databus::slot::HeapSlot;
     use embedded_audio_driver::{
         databus::{Operation, Databus}, payload::Position, port::{InPlacePort, InPort}
     };
@@ -210,8 +210,7 @@ mod tests {
         let mut generator = SineWaveGenerator::new(info, 440.0, 0.5, 2048);
         let requirements = generator.initialize(None).await.unwrap();
         
-        let mut buffer = vec![0u8; 1024]; // A buffer for the output payload
-        let mut slot = Slot::new(Some(&mut buffer));
+        let mut slot = HeapSlot::new_heap(1024); // A buffer for the output payload
         slot.register(Operation::Produce, requirements.out.unwrap());
         slot.register(Operation::Consume, requirements.out.unwrap());
 

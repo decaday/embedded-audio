@@ -220,7 +220,7 @@ mod tests {
     use embedded_io_adapters::std::FromStd;
     use std::io::Cursor;
 
-    use crate::databus::slot::Slot;
+    use crate::databus::slot::HeapSlot;
     use embedded_audio_driver::databus::{Consumer, Operation, Producer, Databus};
 
     // --- Real File Data Integration Test ---
@@ -253,8 +253,7 @@ mod tests {
         assert!(info.num_frames.is_some());
 
         // 2. Process should read data and set metadata correctly
-        let mut buffer = vec![0u8; 1024];
-        let mut slot = Slot::new(Some(&mut buffer));
+        let mut slot = HeapSlot::new_heap(1024);
         slot.register(Operation::Produce, requirements.out.unwrap());
         slot.register(Operation::Consume, requirements.out.unwrap());
 

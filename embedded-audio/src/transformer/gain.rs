@@ -317,7 +317,7 @@ unsafe fn process_simd_i16_neon(payload: &mut [u8], gain: FixedGain) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::databus::slot::Slot;
+    use crate::databus::slot::HeapSlot;
     use embedded_audio_driver::{
         databus::{Operation, Databus}, info::Info, port::{InPort, OutPort}
     };
@@ -328,19 +328,16 @@ mod tests {
         let mut gain = Gain::new(2.0, 64);
         let requirements = gain.initialize(Some(info)).await.unwrap();
 
-        let mut buffer = vec![0u8; 16];
-        let initial_samples: [i16; 8] = [1000, -2000, 3000, -4000, 5000, 20000, -30000, 15000];
-        
-        for (i, sample) in initial_samples.iter().enumerate() {
-            buffer[i*2..(i+1)*2].copy_from_slice(&sample.to_le_bytes());
-        }
-
-        let mut slot = Slot::new(Some(&mut buffer));
+        let mut slot = HeapSlot::new_heap(16);
         slot.register(Operation::InPlace, requirements.in_place.unwrap());
         slot.register(Operation::Produce, requirements.in_place.unwrap());
         slot.register(Operation::Consume, requirements.in_place.unwrap());
         {
             let mut p = slot.acquire_write().await;
+            let initial_samples: [i16; 8] = [1000, -2000, 3000, -4000, 5000, 20000, -30000, 15000];
+            for (i, sample) in initial_samples.iter().enumerate() {
+                p[i*2..(i+1)*2].copy_from_slice(&sample.to_le_bytes());
+            }
             p.set_valid_length(16);
         }
 
@@ -378,22 +375,19 @@ mod tests {
             let mut simd_gain = Gain::new(1.5, 64);
             let requirements = simd_gain.initialize(Some(info)).await.unwrap();
 
-            let mut simd_buffer = vec![0u8; 32];
-            let test_samples: [i16; 16] = [
-                1000, -2000, 3000, -4000, 5000, -6000, 7000, -8000,
-                9000, -10000, 11000, -12000, 13000, -14000, 15000, -16000
-            ];
-            
-            for (i, sample) in test_samples.iter().enumerate() {
-                simd_buffer[i*2..(i+1)*2].copy_from_slice(&sample.to_le_bytes());
-            }
-
-            let mut slot = Slot::new(Some(&mut simd_buffer));
+            let mut slot = HeapSlot::new_heap(32);
             slot.register(Operation::InPlace, requirements.in_place.unwrap());
             slot.register(Operation::Produce, requirements.in_place.unwrap());
             slot.register(Operation::Consume, requirements.in_place.unwrap());
             {
                 let mut p = slot.acquire_write().await;
+                let test_samples: [i16; 16] = [
+                    1000, -2000, 3000, -4000, 5000, -6000, 7000, -8000,
+                    9000, -10000, 11000, -12000, 13000, -14000, 15000, -16000
+                ];
+                for (i, sample) in test_samples.iter().enumerate() {
+                    p[i*2..(i+1)*2].copy_from_slice(&sample.to_le_bytes());
+                }
                 p.set_valid_length(32);
             }
 
@@ -419,23 +413,19 @@ mod tests {
         let mut gain = Gain::new(1.25, 64);
         let requirements = gain.initialize(Some(info)).await.unwrap();
 
-        // Test with 24-bit samples (3 bytes each)
-        let mut buffer = vec![0u8; 12]; // 4 samples * 3 bytes
-        
-        // Sample 1: 0x123456 (little-endian: 0x56, 0x34, 0x12)
-        buffer[0..3].copy_from_slice(&[0x56, 0x34, 0x12]);
-        // Sample 2: negative value
-        buffer[3..6].copy_from_slice(&[0x00, 0x00, 0x80]);
-        // Sample 3 and 4: some test values
-        buffer[6..9].copy_from_slice(&[0xFF, 0xFF, 0x7F]);
-        buffer[9..12].copy_from_slice(&[0x00, 0x00, 0x00]);
-
-        let mut slot = Slot::new(Some(&mut buffer));
+        let mut slot = HeapSlot::new_heap(12); // 4 samples * 3 bytes
         slot.register(Operation::InPlace, requirements.in_place.unwrap());
         slot.register(Operation::Produce, requirements.in_place.unwrap());
         slot.register(Operation::Consume, requirements.in_place.unwrap());
         {
             let mut p = slot.acquire_write().await;
+            // Sample 1: 0x123456 (little-endian: 0x56, 0x34, 0x12)
+            p[0..3].copy_from_slice(&[0x56, 0x34, 0x12]);
+            // Sample 2: negative value
+            p[3..6].copy_from_slice(&[0x00, 0x00, 0x80]);
+            // Sample 3 and 4: some test values
+            p[6..9].copy_from_slice(&[0xFF, 0xFF, 0x7F]);
+            p[9..12].copy_from_slice(&[0x00, 0x00, 0x00]);
             p.set_valid_length(12);
         }
 

@@ -3,7 +3,7 @@ use embassy_executor::Spawner;
 use log::*;
 use embedded_io_adapters::std::FromStd;
 
-use embedded_audio::databus::slot::Slot;
+use embedded_audio::databus::slot::HeapSlot;
 use embedded_audio::decoder::WavDecoder;
 use embedded_audio::stream::cpal_output::{Config, CpalOutputStream};
 use embedded_audio::transformer::Gain;
@@ -63,8 +63,7 @@ async fn playback_wav() {
     info!("Playback starting...");
     
     // 4. Create the databus (a slot with a transformer).
-    let mut buffer = vec![0u8; 4096];
-    let mut slot = Slot::new(Some(&mut buffer)); // `true` enables the transformer stage
+    let mut slot = HeapSlot::new_heap(4096); // `true` enables the transformer stage
     slot.register(Operation::Produce, decoder_port_requirement.out.unwrap());
     slot.register(Operation::Consume, stream_port_requirement.in_.unwrap());
     slot.register(Operation::InPlace, gain_port_requirement.in_place.unwrap());

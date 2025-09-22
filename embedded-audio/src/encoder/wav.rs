@@ -215,7 +215,7 @@ where
 mod tests {
     use embedded_io::{ErrorType, Seek, SeekFrom, Write};
     use embedded_audio_driver::databus::{Consumer, Producer, Operation, Databus};
-    use crate::databus::slot::Slot;
+    use crate::databus::slot::HeapSlot;
     use super::*;
     
     // A mock writer for testing purposes.
@@ -276,8 +276,7 @@ mod tests {
         
         let requirements = encoder.initialize(Some(info)).await.unwrap();
 
-        let mut in_buffer = vec![0u8; 4];
-        let mut slot = Slot::new(Some(&mut in_buffer));
+        let mut slot = HeapSlot::new_heap(4);
         slot.register(Operation::Consume, requirements.in_.unwrap());
         slot.register(Operation::Produce, requirements.in_.unwrap());
         
@@ -312,8 +311,7 @@ mod tests {
         
         let requirements = encoder.initialize(Some(info)).await.unwrap();
 
-        let mut in_buffer = vec![0u8; 1024];
-        let mut slot = Slot::new(Some(&mut in_buffer));
+        let mut slot = HeapSlot::new_heap(1024);
         slot.register(Operation::Consume, requirements.in_.unwrap());
         slot.register(Operation::Produce, requirements.in_.unwrap());
 
